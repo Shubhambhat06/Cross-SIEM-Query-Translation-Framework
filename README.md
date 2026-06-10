@@ -42,7 +42,9 @@ We also release **SIEMBench** — the first publicly available annotated benchma
 
 ## System Architecture
 
-![NL-SIEM System Architecture](docs/architecture/architecture.svg)
+<div align="center">
+  <img src="siem_translation_framework_flowchart.svg" alt="NL-SIEM Architecture" width="800"/>
+</div>
 
 > *Figure 1. End-to-end NL-SIEM pipeline: natural language input is parsed by the LLM agent into a platform-agnostic IR, which is then independently formatted by five SIEM-specific translators and passed through a multi-dimensional evaluation layer.*
 

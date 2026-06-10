@@ -407,12 +407,8 @@ Natural Language Query → Retrieval (RAG) → Parser Agent → Intermediate Rep
 
 The Intermediate Representation (IR) acts as the central abstraction layer, decoupling semantic understanding from SIEM-specific query syntax and enabling consistent translation across heterogeneous security analytics platforms.
 
-```
-```
 
-```
 
----
 
 ## Platform Validation Setup
 

@@ -284,33 +284,132 @@ python scripts/export_tables.py \
 
 ## Repository Structure
 
-```
+```text
 siem-query-translator/
+│
+├── README.md
+├── requirements.txt
+├── pyproject.toml
+├── Makefile
+├── .env.example
+│
 ├── src/
-│   ├── agents/          # Parser, validator, translation agents
-│   ├── ir/              # IR schema definition and validators
-│   ├── translators/     # Per-platform output formatters (5 SIEMs)
-│   ├── llm/             # LLM client, prompt templates, response parser
-│   ├── rag/             # Embeddings, vector store, retriever
-│   ├── evaluation/      # Syntax, semantic, and execution metrics
-│   └── utils/           # Config, logging, exceptions
-├── knowledge_base/      # SIEM documentation corpora for RAG retrieval
+│   ├── agents/
+│   │   ├── parser_agent.py
+│   │   ├── validator_agent.py
+│   │   ├── translation_orchestrator.py
+│   │   └── refinement_agent.py
+│   │
+│   ├── ir/
+│   │   ├── schema.py
+│   │   ├── validator.py
+│   │   ├── examples.json
+│   │   └── ir_to_nl.py
+│   │
+│   ├── translators/
+│   │   ├── base.py
+│   │   ├── splunk.py
+│   │   ├── qradar.py
+│   │   ├── elastic.py
+│   │   ├── sentinel.py
+│   │   ├── wazuh.py
+│   │   └── field_mapping.py
+│   │
+│   ├── llm/
+│   │   ├── client.py
+│   │   ├── prompts.py
+│   │   ├── response_parser.py
+│   │   └── token_counter.py
+│   │
+│   ├── rag/
+│   │   ├── embedder.py
+│   │   ├── vector_store.py
+│   │   ├── retriever.py
+│   │   ├── chunker.py
+│   │   └── ingest.py
+│   │
+│   ├── evaluation/
+│   │   ├── syntax_validator.py
+│   │   ├── semantic_scorer.py
+│   │   ├── execution_match.py
+│   │   ├── ablation.py
+│   │   ├── error_analyzer.py
+│   │   └── metrics_aggregator.py
+│   │
+│   └── utils/
+│       ├── config.py
+│       ├── logger.py
+│       ├── exceptions.py
+│       └── file_io.py
+│
+├── knowledge_base/
+│   ├── splunk/
+│   ├── qradar/
+│   ├── elastic/
+│   ├── sentinel/
+│   ├── wazuh/
+│   └── mitre/
+│
 ├── datasets/
-│   ├── raw/             # Source NL query bank
-│   ├── benchmark/       # SIEMBench v1 annotated dataset
-│   └── processed/       # Tokenized and embedded evaluation splits
+│   ├── raw/
+│   ├── benchmark/
+│   └── processed/
+│
 ├── experiments/
 │   ├── few_shot/
 │   ├── zero_shot/
 │   ├── rag/
 │   └── results/
-│       ├── raw/         # Per-run JSON outputs
-│       └── aggregated/  # Computed metric tables
-├── scripts/             # run_evaluation.py, export_tables.py, generate_dataset.py
-├── tests/               # Unit tests for all modules
+│       ├── raw/
+│       └── aggregated/
+│
+├── scripts/
+│   ├── run_evaluation.py
+│   ├── generate_dataset.py
+│   ├── export_tables.py
+│   ├── ingest_knowledge_base.py
+│   └── translate_query.py
+│
+├── tests/
+│   ├── test_ir_schema.py
+│   ├── test_translators.py
+│   ├── test_evaluation.py
+│   └── test_pipeline_e2e.py
+│
 └── docs/
-    ├── architecture/    # architecture.svg (this diagram)
-    └── paper/           # Figures, tables, draft PDF
+    ├── architecture/
+    └── paper/
+```
+
+### Directory Overview
+
+| Directory         | Purpose                                                                              |
+| ----------------- | ------------------------------------------------------------------------------------ |
+| `src/agents`      | Multi-agent orchestration for parsing, validation, refinement, and translation       |
+| `src/ir`          | Platform-agnostic Intermediate Representation (IR) schema and validation logic       |
+| `src/translators` | IR → SIEM query translators for Splunk, QRadar, Elastic, Sentinel, and Wazuh         |
+| `src/llm`         | LLM abstraction layer, prompting framework, response parsing, and token tracking     |
+| `src/rag`         | Retrieval-Augmented Generation (RAG) pipeline including embeddings and vector search |
+| `src/evaluation`  | Benchmarking, ablation studies, semantic scoring, and execution-level validation     |
+| `src/utils`       | Shared utilities including configuration, logging, exceptions, and file operations   |
+| `knowledge_base`  | SIEM documentation corpus used for retrieval and grounding                           |
+| `datasets`        | SIEMBench benchmark dataset, raw query banks, and processed evaluation artifacts     |
+| `experiments`     | Experiment configurations, ablation runs, and evaluation outputs                     |
+| `scripts`         | Command-line entry points for dataset generation, evaluation, and benchmarking       |
+| `tests`           | Unit tests and end-to-end integration tests                                          |
+| `docs`            | Architecture diagrams, paper assets, figures, tables, and manuscript drafts          |
+
+### Design Philosophy
+
+The system follows a modular research-oriented architecture:
+
+Natural Language Query → Retrieval (RAG) → Parser Agent → Intermediate Representation (IR) → Validation → Platform-Specific Translation → Evaluation
+
+The Intermediate Representation (IR) acts as the central abstraction layer, decoupling semantic understanding from SIEM-specific query syntax and enabling consistent translation across heterogeneous security analytics platforms.
+
+```
+```
+
 ```
 
 ---

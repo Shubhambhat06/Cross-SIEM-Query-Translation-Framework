@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="620" viewBox="0 0 900 620" font-family="Georgia, 'Times New Roman', serif">
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#444" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#185FA5" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="arr-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M1 1L9 5L1 9" fill="none" stroke="#0F6E56" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect width="900" height="620" fill="#ffffff"/>
+
+  <!-- ══════════════════════════════════════════
+       LAYER A — INPUT
+  ══════════════════════════════════════════ -->
+  <!-- input box -->
+  <rect x="320" y="30" width="260" height="52" rx="6" fill="#F1EFE8" stroke="#888780" stroke-width="0.8"/>
+  <text x="450" y="52" text-anchor="middle" font-size="13" font-weight="bold" fill="#2C2C2A">Natural language security query</text>
+  <text x="450" y="69" text-anchor="middle" font-size="10.5" fill="#5F5E5A">"Show failed logins exceeding 50 attempts in 24 h"</text>
+
+  <!-- arrow down -->
+  <line x1="450" y1="82" x2="450" y2="114" stroke="#444" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       LAYER B — LLM ENGINE (outer container)
+  ══════════════════════════════════════════ -->
+  <rect x="100" y="114" width="700" height="148" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+  <text x="136" y="133" font-size="10" font-weight="bold" fill="#3C3489" letter-spacing="0.08em">LLM TRANSLATION ENGINE</text>
+
+  <!-- three inner modules side by side -->
+  <!-- Prompt constructor -->
+  <rect x="122" y="142" width="192" height="104" rx="5" fill="#ffffff" stroke="#AFA9EC" stroke-width="0.7"/>
+  <text x="218" y="162" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#3C3489">Prompt constructor</text>
+  <text x="218" y="179" text-anchor="middle" font-size="10" fill="#534AB7">Few-shot examples</text>
+  <text x="218" y="194" text-anchor="middle" font-size="10" fill="#534AB7">Schema injection</text>
+  <text x="218" y="209" text-anchor="middle" font-size="10" fill="#534AB7">SIEM grammar context</text>
+  <text x="218" y="224" text-anchor="middle" font-size="10" fill="#534AB7">Chain-of-thought prompt</text>
+
+  <!-- LLM inference -->
+  <rect x="354" y="142" width="192" height="104" rx="5" fill="#ffffff" stroke="#AFA9EC" stroke-width="0.7"/>
+  <text x="450" y="162" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#3C3489">LLM inference</text>
+  <text x="450" y="179" text-anchor="middle" font-size="10" fill="#534AB7">GPT-4o / Llama 3</text>
+  <text x="450" y="194" text-anchor="middle" font-size="10" fill="#534AB7">Temperature = 0</text>
+  <text x="450" y="209" text-anchor="middle" font-size="10" fill="#534AB7">Greedy decoding</text>
+  <text x="450" y="224" text-anchor="middle" font-size="10" fill="#534AB7">Structured output mode</text>
+
+  <!-- Post-processor -->
+  <rect x="586" y="142" width="192" height="104" rx="5" fill="#ffffff" stroke="#AFA9EC" stroke-width="0.7"/>
+  <text x="682" y="162" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#3C3489">Post-processor</text>
+  <text x="682" y="179" text-anchor="middle" font-size="10" fill="#534AB7">JSON extraction</text>
+  <text x="682" y="194" text-anchor="middle" font-size="10" fill="#534AB7">Field normalisation</text>
+  <text x="682" y="209" text-anchor="middle" font-size="10" fill="#534AB7">Operator mapping</text>
+  <text x="682" y="224" text-anchor="middle" font-size="10" fill="#534AB7">Time-window parsing</text>
+
+  <!-- inner arrows -->
+  <line x1="314" y1="194" x2="352" y2="194" stroke="#534AB7" stroke-width="0.8" marker-end="url(#arr-blue)"/>
+  <line x1="546" y1="194" x2="584" y2="194" stroke="#534AB7" stroke-width="0.8" marker-end="url(#arr-blue)"/>
+
+  <!-- arrow out of LLM layer -->
+  <line x1="450" y1="262" x2="450" y2="294" stroke="#444" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       LAYER C — INTERMEDIATE REPRESENTATION
+  ══════════════════════════════════════════ -->
+  <rect x="240" y="294" width="420" height="60" rx="6" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+  <text x="450" y="318" text-anchor="middle" font-size="12" font-weight="bold" fill="#085041">Intermediate representation (IR)</text>
+  <text x="450" y="337" text-anchor="middle" font-size="10" fill="#0F6E56">{ fields, filter, operator, time_window, threshold, aggregation }</text>
+
+  <!-- fan-out arrows from IR to 5 SIEM formatters -->
+  <!-- to Splunk: x=100 -->
+  <path d="M360 354 L360 370 L100 370 L100 394" fill="none" stroke="#0F6E56" stroke-width="0.9" marker-end="url(#arr-teal)"/>
+  <!-- to QRadar: x=250 -->
+  <path d="M400 354 L400 370 L250 370 L250 394" fill="none" stroke="#0F6E56" stroke-width="0.9" marker-end="url(#arr-teal)"/>
+  <!-- to Elastic: x=450 (straight) -->
+  <line x1="450" y1="354" x2="450" y2="394" stroke="#0F6E56" stroke-width="0.9" marker-end="url(#arr-teal)"/>
+  <!-- to Sentinel: x=650 -->
+  <path d="M500 354 L500 370 L650 370 L650 394" fill="none" stroke="#0F6E56" stroke-width="0.9" marker-end="url(#arr-teal)"/>
+  <!-- to Wazuh: x=800 -->
+  <path d="M540 354 L540 370 L800 370 L800 394" fill="none" stroke="#0F6E56" stroke-width="0.9" marker-end="url(#arr-teal)"/>
+
+  <!-- ══════════════════════════════════════════
+       LAYER D — SIEM FORMATTERS (5 boxes)
+       widths=140, gaps=12
+       total = 5*140 + 4*12 = 748  → start x=76
+  ══════════════════════════════════════════ -->
+
+  <!-- Splunk SPL: x=30, w=140 -->
+  <rect x="30" y="394" width="140" height="80" rx="5" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
+  <text x="100" y="414" text-anchor="middle" font-size="11" font-weight="bold" fill="#0C447C">Splunk SPL</text>
+  <text x="100" y="430" text-anchor="middle" font-size="9.5" fill="#185FA5">index= | stats</text>
+  <text x="100" y="445" text-anchor="middle" font-size="9.5" fill="#185FA5">eval, where</text>
+  <text x="100" y="460" text-anchor="middle" font-size="9.5" fill="#185FA5">sourcetype filter</text>
+
+  <!-- QRadar AQL: x=180 -->
+  <rect x="180" y="394" width="140" height="80" rx="5" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
+  <text x="250" y="414" text-anchor="middle" font-size="11" font-weight="bold" fill="#0C447C">QRadar AQL</text>
+  <text x="250" y="430" text-anchor="middle" font-size="9.5" fill="#185FA5">SELECT … FROM</text>
+  <text x="250" y="445" text-anchor="middle" font-size="9.5" fill="#185FA5">events LAST 24 HOURS</text>
+  <text x="250" y="460" text-anchor="middle" font-size="9.5" fill="#185FA5">GROUP BY, HAVING</text>
+
+  <!-- Elastic EQL: x=380 -->
+  <rect x="380" y="394" width="140" height="80" rx="5" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
+  <text x="450" y="414" text-anchor="middle" font-size="11" font-weight="bold" fill="#0C447C">Elastic EQL / KQL</text>
+  <text x="450" y="430" text-anchor="middle" font-size="9.5" fill="#185FA5">process where</text>
+  <text x="450" y="445" text-anchor="middle" font-size="9.5" fill="#185FA5">event.type: …</text>
+  <text x="450" y="460" text-anchor="middle" font-size="9.5" fill="#185FA5">.keyword, range</text>
+
+  <!-- Sentinel KQL: x=530 -->
+  <rect x="530" y="394" width="140" height="80" rx="5" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
+  <text x="600" y="414" text-anchor="middle" font-size="11" font-weight="bold" fill="#0C447C">Sentinel KQL</text>
+  <text x="600" y="430" text-anchor="middle" font-size="9.5" fill="#185FA5">SecurityEvent</text>
+  <text x="600" y="445" text-anchor="middle" font-size="9.5" fill="#185FA5">| where, ago()</text>
+  <text x="600" y="460" text-anchor="middle" font-size="9.5" fill="#185FA5">summarize, extend</text>
+
+  <!-- Wazuh XML: x=730 -->
+  <rect x="730" y="394" width="140" height="80" rx="5" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.8"/>
+  <text x="800" y="414" text-anchor="middle" font-size="11" font-weight="bold" fill="#0C447C">Wazuh XML</text>
+  <text x="800" y="430" text-anchor="middle" font-size="9.5" fill="#185FA5">&lt;rule id=…&gt;</text>
+  <text x="800" y="445" text-anchor="middle" font-size="9.5" fill="#185FA5">&lt;match&gt;, &lt;regex&gt;</text>
+  <text x="800" y="460" text-anchor="middle" font-size="9.5" fill="#185FA5">&lt;frequency&gt; tag</text>
+
+  <!-- merge lines down to evaluator -->
+  <line x1="100" y1="474" x2="100" y2="506" stroke="#444" stroke-width="0.8"/>
+  <line x1="250" y1="474" x2="250" y2="506" stroke="#444" stroke-width="0.8"/>
+  <line x1="450" y1="474" x2="450" y2="506" stroke="#444" stroke-width="0.8"/>
+  <line x1="600" y1="474" x2="600" y2="506" stroke="#444" stroke-width="0.8"/>
+  <line x1="800" y1="474" x2="800" y2="506" stroke="#444" stroke-width="0.8"/>
+  <!-- horizontal merge line -->
+  <line x1="100" y1="506" x2="800" y2="506" stroke="#444" stroke-width="0.8"/>
+  <!-- down to evaluator box -->
+  <line x1="450" y1="506" x2="450" y2="530" stroke="#444" stroke-width="1" marker-end="url(#arr)"/>
+
+  <!-- ══════════════════════════════════════════
+       LAYER E — EVALUATION
+  ══════════════════════════════════════════ -->
+  <rect x="170" y="530" width="560" height="62" rx="6" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+  <text x="450" y="551" text-anchor="middle" font-size="12" font-weight="bold" fill="#712B13">Evaluation layer</text>
+  <text x="280" y="570" text-anchor="middle" font-size="10" fill="#993C1D">Syntactic validity</text>
+  <text x="390" y="570" text-anchor="middle" font-size="10" fill="#993C1D">Semantic equivalence</text>
+  <text x="510" y="570" text-anchor="middle" font-size="10" fill="#993C1D">Execution match</text>
+  <text x="620" y="570" text-anchor="middle" font-size="10" fill="#993C1D">BLEU / ROUGE</text>
+  <!-- separator dots -->
+  <circle cx="331" cy="570" r="1.5" fill="#D85A30"/>
+  <circle cx="447" cy="570" r="1.5" fill="#D85A30"/>
+  <circle cx="563" cy="570" r="1.5" fill="#D85A30"/>
+
+  <!-- ══════════════════════════════════════════
+       LAYER LABELS (left margin)
+  ══════════════════════════════════════════ -->
+
+  <!-- caption -->
+  <text x="450" y="610" text-anchor="middle" font-size="10" fill="#888780">Fig. 1  Cross-SIEM Query Translation Framework (NL-SIEM)</text>
+
+</svg>

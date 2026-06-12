@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Literal
-
+from typing import Union
 from pydantic import BaseModel, Field, model_validator
 
 
@@ -117,7 +117,9 @@ class FilterGroup(BaseModel):
     """
 
     operator: LogicalOperator = Field(default=LogicalOperator.AND)
-    conditions: list[FilterCondition | "FilterGroup"] = Field(default_factory=list)
+    conditions: list[Union[FilterCondition, "FilterGroup"]] = Field(
+    default_factory=list
+)
 
     model_config = {"use_enum_values": True}
 

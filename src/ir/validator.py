@@ -148,6 +148,7 @@ def coerce_ir(data: dict) -> IRQuery:
     """
     try:
         data = _deep_copy(data)
+        _check_required_fields(data)
         data = _coerce_action(data)
         data = _coerce_event_type(data)
         data = _coerce_filter_ops(data)

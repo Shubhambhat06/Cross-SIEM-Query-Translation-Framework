@@ -1,0 +1,275 @@
+[
+  {
+    "id": "ex-001",
+    "tactic": "initial_access",
+    "technique_id": "T1110",
+    "complexity": "simple",
+    "nl_query": "Find all failed login attempts in the last 24 hours",
+    "ir": {
+      "action": "filter",
+      "event_type": "authentication",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "status", "op": "eq", "value": "failed" }
+        ]
+      },
+      "time_window": { "duration": "24h", "field": "_time" },
+      "fields": ["src_ip", "user", "status", "timestamp"]
+    }
+  },
+  {
+    "id": "ex-002",
+    "tactic": "initial_access",
+    "technique_id": "T1110",
+    "complexity": "intermediate",
+    "nl_query": "Detect brute force: more than 50 failed logins from the same source IP within 24 hours",
+    "ir": {
+      "action": "filter+aggregate",
+      "event_type": "authentication",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "status", "op": "eq", "value": "failed" }
+        ]
+      },
+      "time_window": { "duration": "24h", "field": "_time" },
+      "aggregation": {
+        "function": "count",
+        "group_by": ["src_ip"],
+        "alias": "attempt_count"
+      },
+      "threshold": {
+        "field": "attempt_count",
+        "op": "gt",
+        "value": 50
+      },
+      "fields": ["src_ip", "attempt_count"]
+    }
+  },
+  {
+    "id": "ex-003",
+    "tactic": "execution",
+    "technique_id": "T1059",
+    "complexity": "simple",
+    "nl_query": "Show me all PowerShell processes spawned by cmd.exe in the last hour",
+    "ir": {
+      "action": "filter",
+      "event_type": "process",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "process_name", "op": "eq",       "value": "powershell.exe" },
+          { "field": "parent_process","op": "contains", "value": "cmd.exe" }
+        ]
+      },
+      "time_window": { "duration": "1h", "field": "_time" },
+      "fields": ["host", "user", "process_name", "parent_process", "command_line"]
+    }
+  },
+  {
+    "id": "ex-004",
+    "tactic": "persistence",
+    "technique_id": "T1053",
+    "complexity": "simple",
+    "nl_query": "Detect new scheduled tasks created in the last 7 days",
+    "ir": {
+      "action": "filter",
+      "event_type": "process",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "event_id",     "op": "eq", "value": 4698 },
+          { "field": "process_name", "op": "eq", "value": "schtasks.exe" }
+        ]
+      },
+      "time_window": { "duration": "7d", "field": "_time" },
+      "fields": ["host", "user", "task_name", "timestamp"]
+    }
+  },
+  {
+    "id": "ex-005",
+    "tactic": "privilege_escalation",
+    "technique_id": "T1548",
+    "complexity": "intermediate",
+    "nl_query": "Find accounts that ran sudo more than 10 times in the last 30 minutes",
+    "ir": {
+      "action": "filter+aggregate",
+      "event_type": "process",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "process_name", "op": "eq", "value": "sudo" },
+          { "field": "status",       "op": "eq", "value": "success" }
+        ]
+      },
+      "time_window": { "duration": "30m", "field": "_time" },
+      "aggregation": {
+        "function": "count",
+        "group_by": ["user", "host"],
+        "alias": "sudo_count"
+      },
+      "threshold": {
+        "field": "sudo_count",
+        "op": "gt",
+        "value": 10
+      },
+      "fields": ["user", "host", "sudo_count"]
+    }
+  },
+  {
+    "id": "ex-006",
+    "tactic": "lateral_movement",
+    "technique_id": "T1021",
+    "complexity": "intermediate",
+    "nl_query": "Detect unusual SMB connections between internal hosts in the last 1 hour",
+    "ir": {
+      "action": "filter+aggregate",
+      "event_type": "network",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "dest_port", "op": "eq",      "value": 445 },
+          { "field": "src_ip",    "op": "contains", "value": "10." }
+        ]
+      },
+      "time_window": { "duration": "1h", "field": "_time" },
+      "aggregation": {
+        "function": "distinct_count",
+        "field": "dest_ip",
+        "group_by": ["src_ip"],
+        "alias": "unique_targets"
+      },
+      "threshold": {
+        "field": "unique_targets",
+        "op": "gt",
+        "value": 5
+      },
+      "fields": ["src_ip", "dest_ip", "dest_port", "unique_targets"]
+    }
+  },
+  {
+    "id": "ex-007",
+    "tactic": "exfiltration",
+    "technique_id": "T1048",
+    "complexity": "intermediate",
+    "nl_query": "Find outbound DNS queries with unusually large response sizes in the last 6 hours",
+    "ir": {
+      "action": "filter+aggregate",
+      "event_type": "dns",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "direction",     "op": "eq",  "value": "outbound" },
+          { "field": "response_size", "op": "gt",  "value": 512 }
+        ]
+      },
+      "time_window": { "duration": "6h", "field": "_time" },
+      "aggregation": {
+        "function": "sum",
+        "field": "response_size",
+        "group_by": ["src_ip", "query_domain"],
+        "alias": "total_bytes"
+      },
+      "threshold": {
+        "field": "total_bytes",
+        "op": "gt",
+        "value": 100000
+      },
+      "fields": ["src_ip", "query_domain", "total_bytes"]
+    }
+  },
+  {
+    "id": "ex-008",
+    "tactic": "exfiltration",
+    "technique_id": "T1071",
+    "complexity": "intermediate",
+    "nl_query": "Detect connections to known malicious IPs from threat intelligence in the last hour",
+    "ir": {
+      "action": "lookup",
+      "event_type": "network",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "direction", "op": "eq", "value": "outbound" }
+        ]
+      },
+      "time_window": { "duration": "1h", "field": "_time" },
+      "lookup": {
+        "lookup_table": "threat_intel_ips",
+        "match_field": "dest_ip",
+        "output_field": "is_malicious",
+        "filter_on_match": true
+      },
+      "fields": ["src_ip", "dest_ip", "dest_port", "is_malicious"]
+    }
+  },
+  {
+    "id": "ex-009",
+    "tactic": "lateral_movement",
+    "technique_id": "T1078",
+    "complexity": "complex",
+    "nl_query": "Detect a user logging in from one country and then from a different country within 30 minutes",
+    "ir": {
+      "action": "sequence",
+      "event_type": "authentication",
+      "sequence": [
+        {
+          "event_type": "authentication",
+          "filter": {
+            "operator": "and",
+            "conditions": [
+              { "field": "status", "op": "eq", "value": "success" }
+            ]
+          }
+        },
+        {
+          "event_type": "authentication",
+          "filter": {
+            "operator": "and",
+            "conditions": [
+              { "field": "status",  "op": "eq",  "value": "success" },
+              { "field": "country", "op": "neq", "value": "$prev.country" }
+            ]
+          },
+          "within": "30m"
+        }
+      ],
+      "fields": ["user", "src_ip", "country", "timestamp"],
+      "tactic": "lateral_movement",
+      "technique_id": "T1078"
+    }
+  },
+  {
+    "id": "ex-010",
+    "tactic": "execution",
+    "technique_id": "T1055",
+    "complexity": "complex",
+    "nl_query": "Find processes that injected into lsass.exe more than 3 times in 10 minutes from the same host",
+    "ir": {
+      "action": "filter+aggregate",
+      "event_type": "process",
+      "filter": {
+        "operator": "and",
+        "conditions": [
+          { "field": "target_process", "op": "eq",      "value": "lsass.exe" },
+          { "field": "event_type",     "op": "contains", "value": "inject" }
+        ]
+      },
+      "time_window": { "duration": "10m", "field": "_time" },
+      "aggregation": {
+        "function": "count",
+        "group_by": ["host", "src_process"],
+        "alias": "injection_count"
+      },
+      "threshold": {
+        "field": "injection_count",
+        "op": "gt",
+        "value": 3
+      },
+      "fields": ["host", "src_process", "target_process", "injection_count"],
+      "tactic": "execution",
+      "technique_id": "T1055"
+    }
+  }
+]

@@ -94,14 +94,15 @@ class LLMError(NLSIEMError):
 
 
 class LLMTimeoutError(LLMError):
-    """Raised when an LLM API call exceeds the configured timeout."""
-
-    def __init__(self, model: str, timeout_seconds: float):
+    def __init__(
+        self,
+        model: str,
+        timeout_seconds: float = 60.0,
+    ):
         super().__init__(
-            f"LLM call to '{model}' timed out after {timeout_seconds}s",
+            f"LLM call to '{model}' timed out after {timeout_seconds} seconds",
             details={"model": model, "timeout_seconds": timeout_seconds},
         )
-
 
 class LLMRateLimitError(LLMError):
     """Raised when the LLM API returns a rate-limit response."""

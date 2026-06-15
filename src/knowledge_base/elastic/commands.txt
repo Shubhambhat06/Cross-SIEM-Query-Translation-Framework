@@ -1,0 +1,314 @@
+================================================================================
+SPLUNK SPL COMMANDS REFERENCE
+Knowledge Base for SIEM Query Translator
+================================================================================
+
+OVERVIEW
+--------
+Splunk Processing Language (SPL) is the query language used to search, analyze,
+and visualize data in Splunk. SPL commands are chained using the pipe (|)
+operator. Each command takes the output of the previous command as its input.
+
+Basic search syntax:
+    index=<index_name> sourcetype=<sourcetype> field=value | command1 | command2
+
+================================================================================
+SEARCH COMMANDS
+================================================================================
+
+SEARCH (implicit)
+-----------------
+The search command is implicit at the start of a pipeline.
+Usage: index=main sourcetype=syslog error
+Explicit: search index=main "failed login"
+Wildcards: source="/var/log/*.log" host=web*
+Boolean: (error OR failure) AND NOT debug
+Field presence: index=main field_name=*
+Negation: index=main NOT status=200
+
+WHERE
+-----
+Filters results using Boolean expressions. Unlike search, where evaluates
+expressions rather than matching terms.
+Usage: | where status >= 400
+       | where isnotnull(src_ip)
+       | where like(username, "admin%")
+       | where cidrmatch("192.168.0.0/16", src_ip)
+       | where status IN (400, 401, 403, 404)
+       | where (count > 100 AND category="authentication")
+
+EVAL
+----
+Creates or modifies fields using expressions.
+Usage: | eval new_field = expression
+Common eval functions:
+  - if(condition, true_val, false_val)
+  - case(cond1, val1, cond2, val2, ...)
+  - coalesce(field1, field2, ...)
+  - len(str), substr(str, start, len), lower(str), upper(str)
+  - round(num, precision), abs(num), floor(num), ceiling(num)
+  - strftime(time, format), strptime(str, format)
+  - now(), relative_time(time, offset)
+  - mvcount(mvfield), mvindex(mvfield, index)
+  - tostring(num), tonumber(str)
+  - md5(str), sha256(str)
+  - urlencode(str), urldecode(str)
+
+Examples:
+  | eval severity_label = if(severity >= 8, "critical", if(severity >= 5, "high", "low"))
+  | eval duration_sec = (end_time - start_time) / 1000
+  | eval is_internal = if(cidrmatch("10.0.0.0/8", src_ip), 1, 0)
+  | eval timestamp_readable = strftime(_time, "%Y-%m-%d %H:%M:%S")
+
+STATS
+-----
+Calculates aggregate statistics. Most commonly used command in SPL.
+Usage: | stats function(field) AS alias BY field1, field2
+
+Statistical functions:
+  - count, count(field)          — total events or non-null values
+  - dc(field)                    — distinct count
+  - sum(field), avg(field)       — sum and average
+  - min(field), max(field)       — minimum and maximum
+  - stdev(field), var(field)     — standard deviation and variance
+  - list(field)                  — list of values (multivalued)
+  - values(field)                — distinct values (multivalued)
+  - first(field), last(field)    — first and last value seen
+  - perc<N>(field)               — Nth percentile, e.g. perc95(duration)
+  - range(field)                 — max minus min
+  - mode(field)                  — most common value
+  - rate(field)                  — rate per second
+
+Examples:
+  | stats count BY src_ip
+  | stats count AS event_count, dc(user) AS unique_users BY action, status
+  | stats sum(bytes) AS total_bytes, avg(bytes) AS avg_bytes BY dest_ip
+  | stats values(src_ip) AS source_ips BY user
+  | stats count BY src_ip | sort -count | head 10
+
+TIMECHART
+---------
+Creates time-series statistics, always bucketed by _time.
+Usage: | timechart [span=<interval>] function(field) BY field
+
+Span options: 1s, 30s, 1m, 5m, 1h, 1d, 1w, 1mon
+Examples:
+  | timechart span=5m count BY action
+  | timechart span=1h sum(bytes) AS throughput BY src_ip
+  | timechart span=1d dc(user) AS unique_users
+  | timechart span=1h count BY status limit=5
+
+CHART
+-----
+Similar to timechart but allows arbitrary X-axis fields.
+Usage: | chart function(field) OVER x_field BY split_field
+Examples:
+  | chart count OVER action BY status
+  | chart avg(duration) OVER src_ip BY dest_port
+
+TABLE
+-----
+Returns results as a table with specified columns.
+Usage: | table field1, field2, field3
+Examples:
+  | table _time, src_ip, dest_ip, action, status, bytes
+  | table user, count, first_seen, last_seen
+
+FIELDS
+------
+Keeps or removes specified fields.
+Usage: | fields [+|-] field1, field2
+Examples:
+  | fields src_ip, dest_ip, action
+  | fields - _raw, _indextime, _cd
+
+RENAME
+------
+Renames fields.
+Usage: | rename old_name AS new_name, old2 AS new2
+Examples:
+  | rename src AS source_ip, dst AS destination_ip
+  | rename count AS event_count
+
+SORT
+----
+Sorts results. Default ascending; prefix with - for descending.
+Usage: | sort [count] [-]field1, [-]field2
+Examples:
+  | sort -count
+  | sort 100 -_time, src_ip
+  | sort -severity, -count
+
+HEAD / TAIL
+-----------
+Returns first N or last N results.
+Usage: | head [N]  | tail [N]
+Examples:
+  | head 10
+  | tail 5
+  | head 100 | tail 10
+
+DEDUP
+-----
+Removes duplicate events based on field values.
+Usage: | dedup [N] field1, field2 [sortby [-]field]
+Examples:
+  | dedup src_ip
+  | dedup 1 user sortby -_time
+  | dedup src_ip, dest_ip, action
+
+TRANSACTION
+-----------
+Groups events into transactions based on fields and time.
+Usage: | transaction field1 [startswith=expr] [endswith=expr] [maxspan=time] [maxpause=time]
+Examples:
+  | transaction session_id maxspan=30m
+  | transaction user startswith="login" endswith="logout" maxspan=8h
+  | transaction src_ip maxspan=1m maxpause=30s
+
+REX
+---
+Extracts fields using regular expressions.
+Usage: | rex field=_raw "(?<new_field>pattern)"
+       | rex mode=sed "s/pattern/replacement/flags"
+Examples:
+  | rex field=_raw "user=(?<username>\w+)"
+  | rex field=message "src=(?<src_ip>\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"
+  | rex mode=sed "s/password=\S+/password=REDACTED/g"
+
+LOOKUP
+------
+Enriches events with data from lookup tables.
+Usage: | lookup lookup_name field1 OUTPUT field2, field3
+       | lookup lookup_name input_field AS local_field OUTPUT output_field
+Examples:
+  | lookup ip_reputation src_ip OUTPUT risk_score, category
+  | lookup user_directory username OUTPUT department, manager
+  | lookup geo_ip src_ip OUTPUT country, city, latitude, longitude
+
+INPUTLOOKUP / OUTPUTLOOKUP
+---------------------------
+Read from or write to lookup tables directly.
+Usage: | inputlookup lookup_name [where condition]
+       | outputlookup lookup_name [append=true]
+Examples:
+  | inputlookup threat_intel.csv where threat_level="high"
+  | outputlookup suspicious_ips.csv append=true
+
+JOIN
+----
+Joins results with another search.
+Usage: | join [type=inner|left|outer] field [subsearch]
+Examples:
+  | join src_ip [search index=firewall action=blocked]
+  | join type=left user [search index=hr | table user, department]
+
+APPEND / APPENDCOLS
+-------------------
+Combines results from multiple searches.
+Usage: | append [subsearch]
+       | appendcols [subsearch]
+Examples:
+  | append [search index=archive sourcetype=auth earliest=-30d@d latest=-7d@d]
+  | appendcols [search index=metrics | stats avg(cpu) AS avg_cpu BY host]
+
+IPLOCATION
+----------
+Adds geographic data for IP addresses.
+Usage: | iplocation [prefix=str] field
+Examples:
+  | iplocation src_ip
+  | iplocation prefix=src_ src_ip
+
+MAKERESULTS
+-----------
+Creates synthetic events for testing.
+Usage: | makeresults count=N
+Examples:
+  | makeresults count=1 | eval test_field="value"
+
+================================================================================
+SEARCH MODIFIERS AND TIME RANGE
+================================================================================
+
+TIME RANGE SPECIFICATION
+------------------------
+earliest and latest modifiers control the time range.
+Relative time syntax:
+  -15m    = 15 minutes ago
+  -1h     = 1 hour ago
+  -1d@d   = beginning of yesterday
+  -7d     = 7 days ago
+  -1mon@mon = beginning of last month
+  @h      = snap to hour
+  @d      = snap to day
+  @w0     = snap to Sunday
+  @mon    = snap to month
+
+Examples:
+  index=main earliest=-24h latest=now
+  index=main earliest=-7d@d latest=@d
+  index=firewall earliest="2024-01-01" latest="2024-01-31"
+  index=main earliest=-1h@h latest=@h
+
+================================================================================
+COMMON FIELD NAMES IN SPLUNK (CIM - COMMON INFORMATION MODEL)
+================================================================================
+
+Authentication Fields:
+  user, src, dest, src_ip, dest_ip, action, app, authentication_method
+  signature, signature_id, status, reason, session_id
+
+Network Fields:
+  src_ip, dest_ip, src_port, dest_port, protocol, transport
+  bytes, bytes_in, bytes_out, packets, packets_in, packets_out
+  direction, duration, action, url, http_method, http_referrer
+  uri_path, uri_query, user_agent, status_code, response_time
+
+Endpoint Fields:
+  host, process, process_name, process_id, parent_process
+  process_path, process_hash, command_line, user
+  file_name, file_path, file_hash, file_size
+
+Threat Intelligence Fields:
+  threat_actor, campaign, indicator_type, indicator_value
+  confidence, severity, category, threat_group
+
+================================================================================
+COMMON SPL PATTERNS FOR SECURITY
+================================================================================
+
+Failed Login Detection:
+  index=auth sourcetype=linux_secure "Failed password"
+  | stats count AS failed_attempts BY user, src_ip
+  | where failed_attempts > 10
+
+Brute Force Detection:
+  index=auth action=failure
+  | bucket _time span=5m
+  | stats count BY _time, src_ip, user
+  | where count > 20
+  | stats count AS attack_windows BY src_ip, user
+
+Privilege Escalation:
+  index=security EventCode=4672 OR EventCode=4673
+  | stats count BY user, host, EventCode
+  | lookup privileged_accounts user OUTPUT is_privileged
+  | where NOT is_privileged="yes" AND count > 0
+
+Data Exfiltration Detection:
+  index=network bytes_out > 1000000
+  | stats sum(bytes_out) AS total_out BY src_ip, dest_ip
+  | where total_out > 100000000
+  | sort -total_out
+
+Lateral Movement:
+  index=auth action=success
+  | stats dc(dest) AS unique_hosts BY user, src_ip
+  | where unique_hosts > 5
+  | sort -unique_hosts
+
+Process Injection Detection:
+  index=endpoint EventCode=8
+  | stats count BY SourceProcessGuid, TargetProcessGuid, User
+  | where count > 0

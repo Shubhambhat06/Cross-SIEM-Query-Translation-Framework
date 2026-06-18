@@ -1,0 +1,213 @@
+================================================================================
+MITRE ATT&CK DETECTION MAPPING REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+This document maps attacker behavior to SIEM detections.
+
+Purpose:
+
+    • Detection Engineering
+    • Query Translation
+    • Threat Hunting
+    • RAG Context Retrieval
+
+================================================================================
+T1110 BRUTE FORCE
+================================================================================
+
+Behavior:
+
+Repeated login failures.
+
+Splunk:
+
+stats count by src_ip
+
+QRadar:
+
+COUNT(*) GROUP BY sourceip
+
+Elastic:
+
+stats count() by source.ip
+
+Sentinel:
+
+summarize count() by IpAddress
+
+Wazuh:
+
+same_source_ip + frequency
+
+================================================================================
+T1110.003 PASSWORD SPRAYING
+================================================================================
+
+Behavior:
+
+One source targeting many users.
+
+Key Indicators:
+
+Single IP
+
+Many usernames
+
+================================================================================
+T1059.001 POWERSHELL
+================================================================================
+
+Behavior:
+
+PowerShell execution.
+
+Indicators:
+
+powershell.exe
+
+EncodedCommand
+
+DownloadString
+
+Common Logs:
+
+Process Creation
+
+Sysmon
+
+EDR
+
+================================================================================
+T1053.005 SCHEDULED TASK
+================================================================================
+
+Behavior:
+
+Persistence using scheduled tasks.
+
+Indicators:
+
+schtasks.exe
+
+Task Scheduler
+
+================================================================================
+T1021.002 PSEXEC
+================================================================================
+
+Behavior:
+
+Remote execution.
+
+Indicators:
+
+psexec.exe
+
+admin$
+
+Service creation
+
+================================================================================
+T1071.004 DNS TUNNELING
+================================================================================
+
+Behavior:
+
+DNS-based communication.
+
+Indicators:
+
+Long DNS labels
+
+High query frequency
+
+TXT records
+
+================================================================================
+T1046 PORT SCANNING
+================================================================================
+
+Behavior:
+
+Discovery through network probing.
+
+Indicators:
+
+Many destination ports
+
+High connection volume
+
+================================================================================
+T1048 DATA EXFILTRATION
+================================================================================
+
+Behavior:
+
+Outbound data theft.
+
+Indicators:
+
+Large transfers
+
+Rare destinations
+
+Off-hours activity
+
+================================================================================
+T1486 RANSOMWARE
+================================================================================
+
+Behavior:
+
+File encryption.
+
+Indicators:
+
+Mass file modifications
+
+vssadmin delete shadows
+
+Backup deletion
+
+================================================================================
+CROSS-SIEM TRANSLATION PRINCIPLE
+================================================================================
+
+Natural Language
+      ↓
+
+MITRE Technique
+
+      ↓
+
+Intermediate Representation
+
+      ↓
+
+SIEM-Specific Query
+
+Examples:
+
+"Detect brute force"
+    →
+T1110
+    →
+IR: authentication_failure + threshold
+    →
+Splunk / QRadar / Elastic / Sentinel / Wazuh
+
+"Detect PowerShell"
+    →
+T1059.001
+    →
+IR: process_execution
+    →
+Platform Query
+
+================================================================================
+END OF DOCUMENT
+================================================================================

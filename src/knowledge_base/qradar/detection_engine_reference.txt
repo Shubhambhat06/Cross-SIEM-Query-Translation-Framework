@@ -1,0 +1,239 @@
+================================================================================
+IBM QRADAR DETECTION ENGINE REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+QRadar detections are implemented using the Custom Rules Engine (CRE).
+
+The CRE evaluates normalized events and flows against rule logic to identify:
+
+    • Authentication attacks
+    • Lateral movement
+    • Malware activity
+    • Persistence
+    • Command and Control
+    • Data Exfiltration
+
+Core Components:
+
+    • Rules
+    • Building Blocks
+    • Reference Sets
+    • Reference Maps
+    • Offenses
+    • Responses
+
+================================================================================
+CUSTOM RULES ENGINE (CRE)
+================================================================================
+
+The CRE processes:
+
+    Event Streams
+    Flow Streams
+
+Rule Types:
+
+    Event Rules
+    Flow Rules
+    Common Rules
+
+Event Rule Example:
+
+IF authentication failures exceed threshold
+THEN create offense
+
+Flow Rule Example:
+
+IF single source scans many ports
+THEN create offense
+
+================================================================================
+RULE TESTS
+================================================================================
+
+Rule tests define matching conditions.
+
+Examples:
+
+    Event matches category
+
+    Event matches QID
+
+    Event matches log source
+
+    Event matches username
+
+    Event matches source IP
+
+    Event magnitude exceeds threshold
+
+================================================================================
+STATEFUL DETECTION
+================================================================================
+
+QRadar supports temporal correlation.
+
+Examples:
+
+    More than 10 failures in 5 minutes
+
+    More than 20 connections in 60 seconds
+
+    Multiple usernames from same source
+
+Common Parameters:
+
+    Count
+    Time Window
+    Threshold
+
+MITRE:
+
+    T1110 Password Guessing
+    T1110.003 Password Spraying
+
+================================================================================
+BUILDING BLOCKS
+================================================================================
+
+Building Blocks are reusable detection logic.
+
+Purpose:
+
+    Avoid duplication
+
+Example:
+
+    BB:Known_Administrative_Accounts
+
+Used By:
+
+    Privilege Abuse Rule
+    Suspicious Login Rule
+    VPN Monitoring Rule
+
+================================================================================
+REFERENCE SETS
+================================================================================
+
+Reference Sets provide persistent memory.
+
+Use Cases:
+
+    Known Admin IPs
+    Approved Domains
+    High Risk Users
+    Malicious IPs
+
+Example:
+
+    IF sourceip IN Suspicious_IP_Set
+    THEN increase offense severity
+
+================================================================================
+REFERENCE MAPS
+================================================================================
+
+Reference Maps store key-value pairs.
+
+Examples:
+
+    User -> Department
+
+    Host -> Owner
+
+    Asset -> Criticality
+
+================================================================================
+OFFENSE GENERATION
+================================================================================
+
+Offenses are QRadar's primary alerting object.
+
+Offense Components:
+
+    Magnitude
+    Source
+    Destination
+    Event Count
+    Associated Rules
+
+Severity Drivers:
+
+    Rule Severity
+    Asset Criticality
+    Threat Intelligence
+    Event Magnitude
+
+================================================================================
+RULE RESPONSES
+================================================================================
+
+Supported Actions:
+
+    Create Offense
+
+    Add to Reference Set
+
+    Send Notification
+
+    Dispatch New Event
+
+    Execute Script
+
+================================================================================
+MITRE ATT&CK MAPPING
+================================================================================
+
+Tactic Alignment:
+
+    Initial Access
+    Execution
+    Persistence
+    Privilege Escalation
+    Defense Evasion
+    Credential Access
+    Discovery
+    Lateral Movement
+    Collection
+    Exfiltration
+    Command and Control
+
+Detection Engineering Best Practice:
+
+    Store ATT&CK Technique IDs
+    Store ATT&CK Tactics
+    Map Correlation Rules To ATT&CK
+
+================================================================================
+TRANSLATION GUIDANCE
+================================================================================
+
+Natural Language:
+
+    "Detect brute force attack"
+
+Translate To:
+
+    Authentication Failure Event
+    Stateful Correlation
+    Source IP Aggregation
+    Threshold > N
+
+Natural Language:
+
+    "Detect port scanning"
+
+Translate To:
+
+    Flow Analysis
+    Distinct Destination Ports
+    Threshold Logic
+
+================================================================================
+END OF DOCUMENT
+================================================================================

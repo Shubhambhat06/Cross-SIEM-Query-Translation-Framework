@@ -1,0 +1,148 @@
+================================================================================
+MICROSOFT SENTINEL KQL REFERENCE MANUAL
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Microsoft Sentinel uses Kusto Query Language (KQL) for threat hunting,
+security analytics, incident investigation, and detection engineering.
+
+KQL is a tabular query language optimized for large-scale telemetry.
+
+Primary Capabilities:
+
+    • Filtering
+    • Aggregation
+    • Correlation
+    • Time-series analysis
+    • Threat hunting
+    • Detection engineering
+
+================================================================================
+TABLES
+================================================================================
+
+Common Security Tables:
+
+SecurityEvent
+
+SigninLogs
+
+DeviceProcessEvents
+
+DeviceNetworkEvents
+
+DeviceFileEvents
+
+DeviceRegistryEvents
+
+DeviceEvents
+
+CommonSecurityLog
+
+DnsEvents
+
+================================================================================
+FILTERING
+================================================================================
+
+SecurityEvent
+| where EventID == 4625
+
+Multiple Conditions:
+
+SecurityEvent
+| where EventID == 4625
+| where IpAddress != ""
+
+String Matching:
+
+| where CommandLine contains "powershell"
+
+Case Insensitive:
+
+| where ProcessCommandLine has "encodedcommand"
+
+================================================================================
+PROJECTION
+================================================================================
+
+Select Fields:
+
+SecurityEvent
+| project Account, IpAddress
+
+================================================================================
+AGGREGATION
+================================================================================
+
+Count:
+
+SecurityEvent
+| summarize count()
+
+Grouping:
+
+SecurityEvent
+| summarize FailureCount=count() by IpAddress
+
+Distinct Count:
+
+| summarize Users=dcount(Account)
+
+================================================================================
+SORTING
+================================================================================
+
+| order by TimeGenerated desc
+
+| top 10 by FailureCount
+
+================================================================================
+JOINS
+================================================================================
+
+SecurityEvent
+| join kind=inner SigninLogs on Account
+
+================================================================================
+TIME FILTERING
+================================================================================
+
+| where TimeGenerated > ago(1h)
+
+| where TimeGenerated > ago(24h)
+
+| where TimeGenerated > ago(7d)
+
+================================================================================
+BINNING
+================================================================================
+
+SecurityEvent
+| summarize count() by bin(TimeGenerated, 1h)
+
+================================================================================
+THREAT HUNTING EXAMPLES
+================================================================================
+
+Failed Authentication:
+
+SecurityEvent
+| where EventID == 4625
+
+PowerShell:
+
+DeviceProcessEvents
+| where ProcessCommandLine contains "powershell"
+
+Scheduled Tasks:
+
+SecurityEvent
+| where EventID == 4698
+
+================================================================================
+END OF DOCUMENT
+================================================================================

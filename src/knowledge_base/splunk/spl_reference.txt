@@ -1,0 +1,213 @@
+================================================================================
+SPLUNK SEARCH PROCESSING LANGUAGE (SPL) REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Splunk Search Processing Language (SPL) is a pipeline-oriented query language
+used for searching, filtering, transforming, correlating, and analyzing
+machine-generated data.
+
+Unlike SQL-based SIEMs, SPL executes commands sequentially through pipelines.
+
+Example:
+
+index=windows EventCode=4625
+| stats count by src_ip
+
+Core Use Cases:
+
+    • Threat Hunting
+    • Incident Response
+    • Detection Engineering
+    • Security Analytics
+    • Operational Monitoring
+
+================================================================================
+SEARCH MODEL
+================================================================================
+
+Basic Search:
+
+index=windows
+
+Field Filter:
+
+index=windows user=administrator
+
+Boolean Logic:
+
+index=windows (EventCode=4625 OR EventCode=4624)
+
+Negation:
+
+index=windows NOT user=service_account
+
+================================================================================
+PIPELINE PROCESSING
+================================================================================
+
+Pipelines transform result sets.
+
+Example:
+
+index=windows
+| search EventCode=4625
+| stats count by src_ip
+
+Commands execute left-to-right.
+
+================================================================================
+SEARCH COMMAND
+================================================================================
+
+Filters events.
+
+Example:
+
+index=linux
+| search process_name="powershell.exe"
+
+================================================================================
+WHERE COMMAND
+================================================================================
+
+Performs conditional filtering.
+
+Example:
+
+index=windows
+| where count > 10
+
+Supports:
+
+    ==
+    !=
+    >
+    <
+    >=
+    <=
+    like()
+
+================================================================================
+TABLE COMMAND
+================================================================================
+
+Selects fields.
+
+Example:
+
+| table src_ip user process_name
+
+================================================================================
+RENAME COMMAND
+================================================================================
+
+Renames fields.
+
+Example:
+
+| rename src_ip as source_ip
+
+================================================================================
+SORT COMMAND
+================================================================================
+
+Example:
+
+| sort -count
+
+================================================================================
+DEDUP COMMAND
+================================================================================
+
+Removes duplicates.
+
+Example:
+
+| dedup src_ip
+
+================================================================================
+STATS COMMAND
+================================================================================
+
+Primary aggregation command.
+
+Functions:
+
+    count
+    sum
+    avg
+    min
+    max
+    dc
+
+Example:
+
+| stats count by src_ip
+
+================================================================================
+EVENTSTATS
+================================================================================
+
+Adds aggregate information to each event.
+
+Example:
+
+| eventstats count by user
+
+================================================================================
+TIMECHART
+================================================================================
+
+Time-series aggregation.
+
+Example:
+
+| timechart count span=1h
+
+================================================================================
+TRANSACTION
+================================================================================
+
+Correlates events.
+
+Example:
+
+| transaction user maxspan=5m
+
+================================================================================
+LOOKUP
+================================================================================
+
+Enriches events.
+
+Example:
+
+| lookup malicious_ips ip OUTPUT reputation
+
+================================================================================
+COMMON SECURITY SEARCHES
+================================================================================
+
+Failed Logons:
+
+index=windows EventCode=4625
+
+PowerShell:
+
+index=windows process_name="powershell.exe"
+
+DNS:
+
+index=dns
+
+Network:
+
+index=firewall
+
+================================================================================
+END OF DOCUMENT
+================================================================================

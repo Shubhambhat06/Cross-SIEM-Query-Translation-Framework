@@ -1,0 +1,150 @@
+================================================================================
+ELASTIC EQL / ES|QL REFERENCE MANUAL
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Elastic Security supports multiple query paradigms:
+
+    • EQL (Event Query Language)
+    • ES|QL
+    • KQL (Kibana Query Language)
+    • Lucene Query Syntax
+
+For security analytics and threat hunting, EQL and ES|QL are preferred.
+
+================================================================================
+EQL EVENT MODEL
+================================================================================
+
+EQL operates on categorized events.
+
+Common Categories:
+
+    authentication
+    process
+    network
+    file
+    registry
+    dns
+    library
+    driver
+
+Example:
+
+authentication
+where event.outcome == "failure"
+
+================================================================================
+FILTERING
+================================================================================
+
+Equality:
+
+process
+where process.name == "powershell.exe"
+
+String Matching:
+
+process
+where process.command_line like "*EncodedCommand*"
+
+Logical Operators:
+
+and
+or
+not
+
+Example:
+
+process
+where process.name=="powershell.exe"
+and process.command_line like "*DownloadString*"
+
+================================================================================
+SEQUENCES
+================================================================================
+
+EQL supports temporal correlation.
+
+Example:
+
+sequence by host.name
+  [process where process.name=="powershell.exe"]
+  [network where destination.port==443]
+
+Purpose:
+
+    Multi-stage attack detection
+    Command and Control
+    Malware execution chains
+
+MITRE:
+
+    T1059
+    T1071
+
+================================================================================
+JOINS
+================================================================================
+
+ES|QL supports joining datasets.
+
+FROM logs
+| WHERE event.category=="authentication"
+| STATS count() BY source.ip
+
+================================================================================
+AGGREGATIONS
+================================================================================
+
+count()
+
+sum()
+
+avg()
+
+max()
+
+min()
+
+Example:
+
+authentication
+| stats count() by source.ip
+
+================================================================================
+TIME FILTERING
+================================================================================
+
+Common windows:
+
+Last 5 minutes
+Last 1 hour
+Last 24 hours
+Last 7 days
+
+================================================================================
+THREAT HUNTING EXAMPLES
+================================================================================
+
+Failed Authentication
+
+authentication
+where event.outcome=="failure"
+
+PowerShell
+
+process
+where process.name=="powershell.exe"
+
+Encoded PowerShell
+
+process
+where process.command_line like "*EncodedCommand*"
+
+================================================================================
+END OF DOCUMENT
+================================================================================

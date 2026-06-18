@@ -1,0 +1,215 @@
+================================================================================
+MITRE ATT&CK ENTERPRISE REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+MITRE ATT&CK (Adversarial Tactics, Techniques, and Common Knowledge)
+is a globally recognized framework describing adversary behavior.
+
+ATT&CK organizes attacker activity into:
+
+    • Tactics
+    • Techniques
+    • Sub-Techniques
+    • Procedures
+
+Purpose:
+
+    • Threat Modeling
+    • Detection Engineering
+    • Threat Hunting
+    • Incident Response
+    • Security Analytics
+
+================================================================================
+ATTACK HIERARCHY
+================================================================================
+
+Tactic
+    →
+Technique
+    →
+Sub-Technique
+    →
+Procedure
+
+Example:
+
+Tactic:
+    Execution
+
+Technique:
+    T1059 Command and Scripting Interpreter
+
+Sub-Technique:
+    T1059.001 PowerShell
+
+Procedure:
+    powershell.exe -EncodedCommand ...
+
+================================================================================
+ATTACK PLATFORM COVERAGE
+================================================================================
+
+Windows
+
+Linux
+
+macOS
+
+Azure AD
+
+Microsoft 365
+
+Google Workspace
+
+Containers
+
+Network Devices
+
+SaaS Platforms
+
+================================================================================
+COMMON TECHNIQUES
+================================================================================
+
+T1110
+Brute Force
+
+Description:
+Repeated authentication attempts.
+
+Detection Ideas:
+    Failed logons
+    Repeated source IPs
+    Password spraying
+
+--------------------------------------------------------------------------------
+
+T1078
+Valid Accounts
+
+Description:
+Use of legitimate credentials.
+
+Detection Ideas:
+    Unusual logins
+    Geographic anomalies
+    Rare devices
+
+--------------------------------------------------------------------------------
+
+T1059
+Command and Scripting Interpreter
+
+Description:
+Execution through command interpreters.
+
+Sub-Techniques:
+
+    T1059.001 PowerShell
+    T1059.003 Windows Command Shell
+    T1059.004 Unix Shell
+
+--------------------------------------------------------------------------------
+
+T1021
+Remote Services
+
+Description:
+Remote system access.
+
+Sub-Techniques:
+
+    T1021.001 RDP
+    T1021.002 SMB/PsExec
+    T1021.004 SSH
+
+--------------------------------------------------------------------------------
+
+T1003
+OS Credential Dumping
+
+Description:
+Credential extraction.
+
+Indicators:
+
+    LSASS access
+    Mimikatz
+    Credential dumping tools
+
+--------------------------------------------------------------------------------
+
+T1046
+Network Service Discovery
+
+Description:
+Port scanning.
+
+Indicators:
+
+    Many destination ports
+    High connection counts
+
+--------------------------------------------------------------------------------
+
+T1071
+Application Layer Protocol
+
+Description:
+Command and control traffic.
+
+Sub-Techniques:
+
+    T1071.001 Web Protocols
+    T1071.004 DNS
+
+--------------------------------------------------------------------------------
+
+T1048
+Exfiltration Over Alternative Protocol
+
+Description:
+Data theft.
+
+Indicators:
+
+    Large outbound transfers
+    Rare destinations
+
+--------------------------------------------------------------------------------
+
+T1486
+Data Encrypted For Impact
+
+Description:
+Ransomware encryption.
+
+Indicators:
+
+    Mass file modifications
+    Shadow copy deletion
+
+================================================================================
+DETECTION ENGINEERING NOTES
+================================================================================
+
+Technique-centric detections
+are more portable than
+vendor-specific detections.
+
+Example:
+
+Brute Force
+    →
+T1110
+    →
+Splunk / QRadar / Elastic / Sentinel / Wazuh
+
+================================================================================
+END OF DOCUMENT
+================================================================================

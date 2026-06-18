@@ -1,0 +1,140 @@
+================================================================================
+MICROSOFT SENTINEL ANALYTICS RULES REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Analytics Rules transform KQL queries into detections.
+
+Rule Categories:
+
+    • Scheduled
+    • Near Real Time (NRT)
+    • Fusion
+    • Machine Learning
+    • Threat Intelligence
+
+================================================================================
+SCHEDULED RULES
+================================================================================
+
+Periodic KQL execution.
+
+Components:
+
+Query
+
+Frequency
+
+Lookback Window
+
+Threshold
+
+Example:
+
+SecurityEvent
+| where EventID == 4625
+| summarize FailureCount=count() by IpAddress
+| where FailureCount > 10
+
+================================================================================
+NRT RULES
+================================================================================
+
+Near Real-Time evaluation.
+
+Use Cases:
+
+    Credential attacks
+
+    Lateral movement
+
+    Privilege escalation
+
+================================================================================
+ENTITY MAPPING
+================================================================================
+
+Supported Entities:
+
+Account
+
+Host
+
+IP
+
+Process
+
+File
+
+URL
+
+Cloud Application
+
+================================================================================
+INCIDENT GENERATION
+================================================================================
+
+Rule Results:
+
+Alert
+
+Incident
+
+Investigation Graph
+
+Entity Relationships
+
+================================================================================
+ALERT SEVERITY
+================================================================================
+
+Informational
+
+Low
+
+Medium
+
+High
+
+Critical
+
+================================================================================
+MITRE ATT&CK MAPPING
+================================================================================
+
+Every rule may contain:
+
+Technique
+
+Sub-Technique
+
+Tactic
+
+Examples:
+
+T1110 Password Guessing
+
+T1059 PowerShell
+
+T1021 Remote Services
+
+T1048 Exfiltration
+
+================================================================================
+BEST PRACTICES
+================================================================================
+
+Use normalized schemas.
+
+Map ATT&CK techniques.
+
+Use entity mapping.
+
+Minimize false positives.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

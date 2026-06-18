@@ -1,0 +1,247 @@
+================================================================================
+MITRE ATT&CK TACTIC REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Tactics represent adversary goals.
+
+Each tactic contains multiple techniques.
+
+================================================================================
+TA0001
+INITIAL ACCESS
+================================================================================
+
+Goal:
+
+Gain initial foothold.
+
+Common Techniques:
+
+T1190 Exploit Public Facing Application
+
+T1566 Phishing
+
+T1078 Valid Accounts
+
+Detection Sources:
+
+Web Logs
+Email Logs
+Authentication Logs
+
+================================================================================
+TA0002
+EXECUTION
+================================================================================
+
+Goal:
+
+Run attacker-controlled code.
+
+Techniques:
+
+T1059 PowerShell
+
+T1204 User Execution
+
+Detection Sources:
+
+Process Creation
+PowerShell Logs
+EDR Telemetry
+
+================================================================================
+TA0003
+PERSISTENCE
+================================================================================
+
+Goal:
+
+Maintain access.
+
+Techniques:
+
+T1053 Scheduled Task
+
+T1547 Registry Run Keys
+
+Detection Sources:
+
+Registry Events
+Scheduled Tasks
+Services
+
+================================================================================
+TA0004
+PRIVILEGE ESCALATION
+================================================================================
+
+Goal:
+
+Gain elevated permissions.
+
+Techniques:
+
+T1548 Abuse Elevation Control Mechanism
+
+Detection Sources:
+
+Process Events
+Authentication Logs
+
+================================================================================
+TA0005
+DEFENSE EVASION
+================================================================================
+
+Goal:
+
+Avoid detection.
+
+Techniques:
+
+T1070 Indicator Removal
+
+T1562 Impair Defenses
+
+Detection Sources:
+
+AV Logs
+EDR Logs
+
+================================================================================
+TA0006
+CREDENTIAL ACCESS
+================================================================================
+
+Goal:
+
+Steal credentials.
+
+Techniques:
+
+T1003 Credential Dumping
+
+Detection Sources:
+
+LSASS Access
+Mimikatz Execution
+
+================================================================================
+TA0007
+DISCOVERY
+================================================================================
+
+Goal:
+
+Learn environment.
+
+Techniques:
+
+T1046 Network Service Discovery
+
+T1087 Account Discovery
+
+Detection Sources:
+
+Network Logs
+Authentication Logs
+
+================================================================================
+TA0008
+LATERAL MOVEMENT
+================================================================================
+
+Goal:
+
+Move between systems.
+
+Techniques:
+
+T1021 Remote Services
+
+Detection Sources:
+
+SMB
+RDP
+SSH
+
+================================================================================
+TA0009
+COLLECTION
+================================================================================
+
+Goal:
+
+Gather data.
+
+Techniques:
+
+T1005 Data From Local System
+
+Detection Sources:
+
+File Access
+Archive Creation
+
+================================================================================
+TA0010
+EXFILTRATION
+================================================================================
+
+Goal:
+
+Steal information.
+
+Techniques:
+
+T1048 Exfiltration
+
+Detection Sources:
+
+Network Flows
+Proxy Logs
+
+================================================================================
+TA0011
+COMMAND AND CONTROL
+================================================================================
+
+Goal:
+
+Maintain communication.
+
+Techniques:
+
+T1071 Application Layer Protocol
+
+Detection Sources:
+
+DNS
+HTTP
+HTTPS
+
+================================================================================
+IMPACT
+================================================================================
+
+Goal:
+
+Disrupt operations.
+
+Techniques:
+
+T1486 Ransomware
+
+Detection Sources:
+
+File Events
+Backup Deletion
+
+================================================================================
+END OF DOCUMENT
+================================================================================

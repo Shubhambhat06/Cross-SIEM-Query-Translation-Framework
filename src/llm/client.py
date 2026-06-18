@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -204,7 +205,7 @@ class LLMClient:
 
     def __init__(
         self,
-        provider:    str        = "groq",
+        provider:    str | None = None,
         model:       str | None = None,
         api_key:     str | None = None,
         temperature: float      = 0.0,
@@ -227,7 +228,17 @@ class LLMClient:
             max_retries: Retry attempts on transient errors.
             ollama_host: Override OLLAMA_HOST (e.g. "http://remote:11434").
         """
-        self.provider    = provider.lower().strip()
+        
+        if provider is None:
+            if os.getenv("GOOGLE_API_KEY"):
+                provider = "gemini"
+            elif os.getenv("GROQ_API_KEY"):
+                provider = "groq"
+            elif os.getenv("OPENROUTER_API_KEY"):
+                provider = "openrouter"
+            else:
+                provider = "ollama"
+        self.provider  = provider.lower().strip()    
         self.temperature = temperature
         self.max_tokens  = max_tokens
         self.timeout     = timeout
@@ -366,9 +377,13 @@ class LLMClient:
                 last_exc = exc
                 self._circuit.record_failure()
                 wait = attempt * 2
+                
                 log.warning("LLM call failed — retrying", extra={"error": str(exc), "attempt": attempt, "wait_s": wait})
                 time.sleep(wait)
-
+            if last_exc:
+                print("\nLAST EXCEPTION:")
+                print(type(last_exc))
+                print(repr(last_exc))
         raise LLMMaxRetriesError(model=self.model, attempts=self.max_retries)
 
     def complete_json(
@@ -785,6 +800,10 @@ class LLMClient:
                     "too many requests",
                 )
             ):
+                print("\nRAW GEMINI ERROR:")
+                print(type(exc))
+                print(repr(exc))
+
                 raise LLMRateLimitError(model=self.model) from exc
             if any(k in err_str for k in ("timeout", "deadline", "504")):
                 raise LLMTimeoutError(model=self.model, timeout_seconds=self.timeout) from exc

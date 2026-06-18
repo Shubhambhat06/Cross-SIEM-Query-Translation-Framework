@@ -214,6 +214,7 @@ class PromptBuilder:
         rag_context: str | None      = None,
         tactic_hint: str | None      = None,
         provider:    ProviderHint    = "auto",
+        correction_hint: str | None = None,
     ) -> list[dict]:
         """
         Build the full message list for NL → IR translation.
@@ -236,7 +237,17 @@ class PromptBuilder:
 
         # Build the user message
         user_parts: list[str] = []
+        if correction_hint:
+            user_parts.append(
+                f"""
+        Previous attempt failed.
 
+        Validation/Parse Error:
+        {correction_hint}
+
+        Generate a corrected IR JSON.
+        """
+            )
         if rag_context:
             user_parts.append(
                 f"Relevant SIEM documentation:\n{rag_context}\n---"

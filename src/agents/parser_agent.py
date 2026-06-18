@@ -223,19 +223,26 @@ class ParserAgent:
                 )
 
             except LLMError as exc:
-                last_error = f"LLM error: {exc}"
-                log.warning(
-                    "LLM error — will retry",
-                    extra={"attempt": attempt, "error": str(exc)},
-                )
+                print("\n" + "=" * 80)
+                print("LLM ERROR")
+                print("=" * 80)
+                print(type(exc))
+                print(exc)
+                print("=" * 80)
+
+                raise
 
             except Exception as exc:
-                last_error = str(exc)
-                log.warning(
-                    "Unexpected parse error — will retry",
-                    extra={"attempt": attempt, "error": str(exc)},
-                )
+                import traceback
 
+                print("\n" + "=" * 80)
+                print("UNEXPECTED PARSE ERROR")
+                print("=" * 80)
+                traceback.print_exc()
+                print("=" * 80)
+
+                last_error = str(exc)
+                raise
             # Exponential backoff between retries (skip on last)
             if attempt < self.max_retries:
                 time.sleep(min(2 ** attempt, 10))

@@ -1,0 +1,150 @@
+================================================================================
+WAZUH CORRELATION REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Correlation combines multiple related events into a higher-confidence
+security detection.
+
+Correlation Dimensions:
+
+Time
+
+Source
+
+Destination
+
+User
+
+Host
+
+================================================================================
+TEMPORAL CORRELATION
+================================================================================
+
+frequency
+
+Number of required events.
+
+Example:
+
+<frequency>10</frequency>
+
+--------------------------------------------------------------------------------
+
+timeframe
+
+Observation window.
+
+Example:
+
+<timeframe>300</timeframe>
+
+Meaning:
+
+10 events within 300 seconds.
+
+================================================================================
+SOURCE CORRELATION
+================================================================================
+
+same_source_ip
+
+Example:
+
+<same_source_ip/>
+
+Use Cases:
+
+Brute Force
+
+Port Scanning
+
+Password Spraying
+
+================================================================================
+DESTINATION CORRELATION
+================================================================================
+
+same_dest_ip
+
+Use Cases:
+
+Lateral Movement
+
+Scanning
+
+================================================================================
+USER CORRELATION
+================================================================================
+
+same_user
+
+Use Cases:
+
+Privilege Escalation
+
+Account Abuse
+
+Persistence
+
+================================================================================
+HOST CORRELATION
+================================================================================
+
+same_host
+
+Use Cases:
+
+Process Chains
+
+Persistence
+
+Execution
+
+================================================================================
+MULTI-STAGE DETECTIONS
+================================================================================
+
+Example:
+
+SSH Failure
+    →
+Repeated Failure
+    →
+Brute Force Alert
+
+================================================================================
+MITRE MAPPINGS
+================================================================================
+
+T1110
+
+T1021
+
+T1059
+
+T1071
+
+T1048
+
+================================================================================
+CORRELATION BEST PRACTICES
+================================================================================
+
+Use frequency thresholds.
+
+Use ATT&CK mappings.
+
+Use source-based grouping.
+
+Prefer chained rules.
+
+Reduce false positives.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

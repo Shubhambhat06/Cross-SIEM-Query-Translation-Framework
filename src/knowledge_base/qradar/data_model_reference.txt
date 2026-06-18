@@ -1,0 +1,616 @@
+================================================================================
+IBM QRADAR DATA MODEL REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+IBM QRadar normalises incoming log sources through Device Support Modules
+(DSMs). Raw vendor-specific logs are mapped into a common event schema
+allowing unified correlation, analytics, and threat hunting.
+
+This document describes the logical QRadar event model used for query
+translation and cross-SIEM field mapping.
+
+Primary Objectives:
+
+    • Event normalisation
+    • Vendor abstraction
+    • Cross-platform correlation
+    • Detection portability
+    • Threat hunting support
+
+================================================================================
+EVENT MODEL OVERVIEW
+================================================================================
+
+Each QRadar event contains:
+
+    • Source Information
+    • Destination Information
+    • User Context
+    • Event Classification
+    • Device Metadata
+    • Temporal Metadata
+    • Network Metadata
+    • Risk Metadata
+
+Example Event:
+
+{
+    "sourceip": "10.1.1.15",
+    "destinationip": "192.168.10.22",
+    "username": "jsmith",
+    "eventname": "Authentication Failure",
+    "categoryname": "Authentication",
+    "magnitude": 6,
+    "severity": 5,
+    "credibility": 8
+}
+
+================================================================================
+SOURCE ENTITY FIELDS
+================================================================================
+
+sourceip
+--------------------------------------------------------------------------------
+Originating IP address.
+
+Examples:
+
+    10.0.0.10
+    172.16.1.22
+
+Equivalent Fields:
+
+    Splunk      -> src_ip
+    Elastic     -> source.ip
+    Sentinel    -> SrcIpAddr
+    Wazuh       -> srcip
+
+--------------------------------------------------------------------------------
+
+sourceport
+
+Originating network port.
+
+Examples:
+
+    443
+    3389
+    22
+
+Equivalent Fields:
+
+    Splunk      -> src_port
+    Elastic     -> source.port
+    Sentinel    -> SrcPortNumber
+
+--------------------------------------------------------------------------------
+
+sourcehostname
+
+Source hostname.
+
+Examples:
+
+    workstation-15
+    dc01.corp.local
+
+================================================================================
+DESTINATION ENTITY FIELDS
+================================================================================
+
+destinationip
+
+Target IP address.
+
+Examples:
+
+    192.168.100.5
+    8.8.8.8
+
+Equivalent Fields:
+
+    Splunk      -> dest_ip
+    Elastic     -> destination.ip
+    Sentinel    -> DstIpAddr
+    Wazuh       -> dstip
+
+--------------------------------------------------------------------------------
+
+destinationport
+
+Target port.
+
+Examples:
+
+    80
+    443
+    3389
+    445
+
+Equivalent Fields:
+
+    Splunk      -> dest_port
+    Elastic     -> destination.port
+    Sentinel    -> DstPortNumber
+
+--------------------------------------------------------------------------------
+
+destinationhostname
+
+Target hostname.
+
+Examples:
+
+    fileserver01
+    exchange01
+
+================================================================================
+USER CONTEXT
+================================================================================
+
+username
+
+Authenticated user.
+
+Examples:
+
+    administrator
+    svc_backup
+    john.smith
+
+Equivalent Fields:
+
+    Splunk      -> user
+    Elastic     -> user.name
+    Sentinel    -> Account
+    Wazuh       -> user
+
+--------------------------------------------------------------------------------
+
+domainname
+
+Authentication domain.
+
+Examples:
+
+    CORP
+    ADLAB
+
+--------------------------------------------------------------------------------
+
+identityip
+
+User-associated endpoint address.
+
+================================================================================
+EVENT CLASSIFICATION
+================================================================================
+
+eventname
+
+Human-readable event description.
+
+Examples:
+
+    Authentication Failure
+    Authentication Success
+    Firewall Allow
+    DNS Query
+
+--------------------------------------------------------------------------------
+
+categoryname
+
+Normalised category.
+
+Common Categories:
+
+    Authentication
+    Network Activity
+    Malware
+    Firewall
+    VPN
+    DNS
+    Proxy
+    Endpoint Activity
+
+--------------------------------------------------------------------------------
+
+qid
+
+QRadar Event Identifier.
+
+Unique identifier representing a normalised event type.
+
+Examples:
+
+    5000123
+    387654
+
+================================================================================
+RISK SCORING MODEL
+================================================================================
+
+QRadar computes:
+
+    Severity
+    Credibility
+    Relevance
+
+These values combine into:
+
+    Magnitude
+
+--------------------------------------------------------------------------------
+
+severity
+
+Impact of the event.
+
+Range:
+
+    0-10
+
+Interpretation:
+
+    0-2     Informational
+    3-4     Low
+    5-6     Medium
+    7-8     High
+    9-10    Critical
+
+--------------------------------------------------------------------------------
+
+credibility
+
+Confidence in correctness.
+
+Range:
+
+    0-10
+
+--------------------------------------------------------------------------------
+
+relevance
+
+Business importance.
+
+Range:
+
+    0-10
+
+--------------------------------------------------------------------------------
+
+magnitude
+
+Combined risk score.
+
+Range:
+
+    0-10
+
+Used heavily in correlation rules.
+
+================================================================================
+AUTHENTICATION DATA MODEL
+================================================================================
+
+Common Fields:
+
+    username
+    sourceip
+    destinationip
+    eventname
+    categoryname
+
+Common Authentication Events:
+
+    Login Success
+    Login Failure
+    Account Lockout
+    Password Change
+    Privilege Escalation
+
+Examples:
+
+Authentication Failure:
+
+    username=administrator
+    sourceip=10.10.10.25
+
+Authentication Success:
+
+    username=jdoe
+    sourceip=10.10.10.100
+
+--------------------------------------------------------------------------------
+
+MITRE Mapping
+
+T1110
+Password Guessing
+
+T1078
+Valid Accounts
+
+T1556
+Modify Authentication Process
+
+================================================================================
+NETWORK DATA MODEL
+================================================================================
+
+Core Fields:
+
+    sourceip
+    destinationip
+    sourceport
+    destinationport
+    protocolid
+    bytesreceived
+    bytessent
+
+Protocols:
+
+    TCP
+    UDP
+    ICMP
+    GRE
+
+Common Detections:
+
+    Port Scanning
+    Beaconing
+    Exfiltration
+    Lateral Movement
+
+MITRE:
+
+    T1046
+    T1021
+    T1071
+    T1048
+
+================================================================================
+DNS DATA MODEL
+================================================================================
+
+dnsquestion
+
+Requested domain.
+
+Examples:
+
+    google.com
+    microsoft.com
+    update.example.org
+
+--------------------------------------------------------------------------------
+
+dnsresponse
+
+DNS response.
+
+Examples:
+
+    8.8.8.8
+    1.1.1.1
+
+--------------------------------------------------------------------------------
+
+recordtype
+
+DNS record.
+
+Common Values:
+
+    A
+    AAAA
+    TXT
+    MX
+    PTR
+    NS
+
+--------------------------------------------------------------------------------
+
+Detection Use Cases
+
+    DNS Tunneling
+    DGA Activity
+    Command-and-Control
+    Data Exfiltration
+
+MITRE:
+
+    T1071.004
+
+================================================================================
+WEB DATA MODEL
+================================================================================
+
+url
+
+Requested URL.
+
+Examples:
+
+    https://example.com/login
+
+--------------------------------------------------------------------------------
+
+requestmethod
+
+HTTP Method.
+
+Values:
+
+    GET
+    POST
+    PUT
+    DELETE
+
+--------------------------------------------------------------------------------
+
+useragent
+
+Browser identifier.
+
+Examples:
+
+    Chrome
+    Firefox
+    PowerShell
+
+--------------------------------------------------------------------------------
+
+statuscode
+
+Response code.
+
+Examples:
+
+    200
+    301
+    403
+    404
+    500
+
+================================================================================
+PROCESS DATA MODEL
+================================================================================
+
+process_name
+
+Process executable.
+
+Examples:
+
+    powershell.exe
+    cmd.exe
+    rundll32.exe
+
+--------------------------------------------------------------------------------
+
+command_line
+
+Full execution command.
+
+Examples:
+
+    powershell.exe -EncodedCommand ...
+
+--------------------------------------------------------------------------------
+
+parent_process
+
+Parent executable.
+
+Examples:
+
+    explorer.exe
+    winword.exe
+
+--------------------------------------------------------------------------------
+
+Detection Use Cases
+
+    PowerShell Abuse
+    LOLBins
+    Persistence
+    Credential Dumping
+
+MITRE:
+
+    T1059
+    T1218
+    T1003
+
+================================================================================
+FLOW DATA MODEL
+================================================================================
+
+Flows describe communications.
+
+Core Attributes:
+
+    sourceip
+    destinationip
+    sourceport
+    destinationport
+    bytes
+    packets
+    protocolid
+
+Flow Use Cases:
+
+    Beaconing
+    Exfiltration
+    Port Scanning
+    Lateral Movement
+
+================================================================================
+COMMON CROSS-SIEM FIELD MAPPING
+================================================================================
+
+QRadar             Splunk          Elastic ECS         Sentinel
+
+sourceip           src_ip          source.ip           SrcIpAddr
+
+destinationip      dest_ip         destination.ip      DstIpAddr
+
+sourceport         src_port        source.port         SrcPortNumber
+
+destinationport    dest_port       destination.port    DstPortNumber
+
+username           user            user.name           Account
+
+eventname          signature       event.action        EventName
+
+magnitude          severity        event.severity      AlertSeverity
+
+url                url             url.full            Url
+
+dnsquestion        query           dns.question.name   DnsQuery
+
+================================================================================
+TRANSLATION GUIDANCE FOR NL-SIEM
+================================================================================
+
+When generating QRadar queries:
+
+Prefer:
+
+    sourceip
+    destinationip
+    username
+    eventname
+    categoryname
+
+Avoid vendor-specific raw fields unless explicitly referenced.
+
+Use categoryname when translating semantic concepts:
+
+    "failed login"
+        ->
+    categoryname ILIKE '%authentication failure%'
+
+Use aggregations for behavioural detections:
+
+    brute force
+    password spraying
+    beaconing
+    scanning
+
+Translate SPL stats operations to:
+
+    GROUP BY
+    COUNT()
+    HAVING
+
+================================================================================
+END OF DOCUMENT
+================================================================================

@@ -1,0 +1,158 @@
+================================================================================
+MICROSOFT SENTINEL SCHEMA REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Microsoft Sentinel normalizes data from multiple Microsoft and third-party
+sources into structured tables.
+
+================================================================================
+SECURITYEVENT TABLE
+================================================================================
+
+Purpose:
+
+Windows Security Events
+
+Key Fields:
+
+TimeGenerated
+
+EventID
+
+Account
+
+Computer
+
+IpAddress
+
+Activity
+
+Examples:
+
+4624 Login Success
+
+4625 Login Failure
+
+4688 Process Creation
+
+4698 Scheduled Task Created
+
+================================================================================
+SIGNINLOGS TABLE
+================================================================================
+
+Purpose:
+
+Azure AD Authentication
+
+Key Fields:
+
+UserPrincipalName
+
+IPAddress
+
+ResultType
+
+Location
+
+DeviceDetail
+
+================================================================================
+DEVICEPROCESSEVENTS TABLE
+================================================================================
+
+Purpose:
+
+Process Execution Telemetry
+
+Key Fields:
+
+DeviceName
+
+ProcessCommandLine
+
+FileName
+
+InitiatingProcessFileName
+
+AccountName
+
+SHA256
+
+================================================================================
+DEVICENETWORKEVENTS TABLE
+================================================================================
+
+Purpose:
+
+Network Connections
+
+Key Fields:
+
+LocalIP
+
+RemoteIP
+
+LocalPort
+
+RemotePort
+
+Protocol
+
+================================================================================
+DEVICEFILEEVENTS TABLE
+================================================================================
+
+Purpose:
+
+File Activity
+
+Key Fields:
+
+FileName
+
+FolderPath
+
+SHA256
+
+FileSize
+
+================================================================================
+DNS EVENTS
+================================================================================
+
+Key Fields:
+
+DnsQuery
+
+DnsResponse
+
+IPAddress
+
+================================================================================
+COMMON CROSS-SIEM MAPPINGS
+================================================================================
+
+Sentinel             Elastic ECS
+
+IpAddress            source.ip
+
+Account              user.name
+
+RemoteIP             destination.ip
+
+RemotePort           destination.port
+
+ProcessCommandLine   process.command_line
+
+FileName             file.name
+
+DnsQuery             dns.question.name
+
+================================================================================
+END OF DOCUMENT
+================================================================================

@@ -1,0 +1,124 @@
+================================================================================
+ELASTIC SECURITY DETECTION ENGINE REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Elastic Security detections are implemented through Detection Rules.
+
+Rule Types:
+
+    • EQL Rules
+    • Query Rules
+    • Threshold Rules
+    • Machine Learning Rules
+    • Indicator Match Rules
+
+================================================================================
+EQL RULES
+================================================================================
+
+Purpose:
+
+    Behavioral detections
+
+Example:
+
+sequence by host.name
+  [process where process.name=="powershell.exe"]
+  [network where destination.port==443]
+
+================================================================================
+THRESHOLD RULES
+================================================================================
+
+Purpose:
+
+    Aggregation detections
+
+Example:
+
+authentication
+where event.outcome=="failure"
+
+Threshold:
+
+    source.ip > 10 failures
+
+MITRE:
+
+    T1110
+
+================================================================================
+MACHINE LEARNING RULES
+================================================================================
+
+Purpose:
+
+    Anomaly detection
+
+Examples:
+
+    Rare Process
+
+    Rare DNS Domain
+
+    Unusual Authentication
+
+================================================================================
+INDICATOR MATCH RULES
+================================================================================
+
+Purpose:
+
+    IOC matching
+
+Sources:
+
+    Threat Feeds
+
+    STIX
+
+    TAXII
+
+================================================================================
+ALERT GENERATION
+================================================================================
+
+Alert Fields:
+
+    rule.name
+
+    rule.id
+
+    risk_score
+
+    severity
+
+    timestamp
+
+================================================================================
+MITRE MAPPING
+================================================================================
+
+Elastic detections commonly map to:
+
+    Initial Access
+
+    Execution
+
+    Persistence
+
+    Discovery
+
+    Credential Access
+
+    Lateral Movement
+
+    Exfiltration
+
+================================================================================
+END OF DOCUMENT
+================================================================================

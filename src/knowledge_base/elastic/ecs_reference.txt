@@ -1,0 +1,168 @@
+================================================================================
+ELASTIC COMMON SCHEMA (ECS) REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Elastic Common Schema (ECS) provides a vendor-neutral event taxonomy.
+
+Purpose:
+
+    • Normalization
+    • Correlation
+    • Cross-source analytics
+    • Detection portability
+
+================================================================================
+AUTHENTICATION DOMAIN
+================================================================================
+
+user.name
+
+user.id
+
+source.ip
+
+destination.ip
+
+event.outcome
+
+event.action
+
+Examples:
+
+event.outcome == "success"
+
+event.outcome == "failure"
+
+================================================================================
+PROCESS DOMAIN
+================================================================================
+
+process.name
+
+process.pid
+
+process.parent.name
+
+process.command_line
+
+process.executable
+
+process.hash.sha256
+
+Examples:
+
+process.name == "powershell.exe"
+
+process.command_line like "*EncodedCommand*"
+
+================================================================================
+FILE DOMAIN
+================================================================================
+
+file.name
+
+file.path
+
+file.extension
+
+file.hash.sha256
+
+file.size
+
+================================================================================
+NETWORK DOMAIN
+================================================================================
+
+source.ip
+
+destination.ip
+
+source.port
+
+destination.port
+
+network.protocol
+
+network.bytes
+
+network.packets
+
+================================================================================
+DNS DOMAIN
+================================================================================
+
+dns.question.name
+
+dns.question.type
+
+dns.answers.data
+
+dns.resolved_ip
+
+================================================================================
+URL DOMAIN
+================================================================================
+
+url.full
+
+url.path
+
+url.domain
+
+url.extension
+
+================================================================================
+HOST DOMAIN
+================================================================================
+
+host.name
+
+host.hostname
+
+host.os.name
+
+host.os.version
+
+host.ip
+
+================================================================================
+EVENT DOMAIN
+================================================================================
+
+event.category
+
+event.type
+
+event.kind
+
+event.outcome
+
+event.action
+
+event.severity
+
+================================================================================
+CROSS SIEM FIELD MAPPING
+================================================================================
+
+Elastic ECS           Splunk          QRadar
+
+source.ip             src_ip          sourceip
+
+destination.ip        dest_ip         destinationip
+
+user.name             user            username
+
+destination.port      dest_port       destinationport
+
+process.name          process         process_name
+
+dns.question.name     query           dnsquestion
+
+================================================================================
+END OF DOCUMENT
+================================================================================

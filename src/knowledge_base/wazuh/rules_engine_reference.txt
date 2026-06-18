@@ -1,0 +1,170 @@
+================================================================================
+WAZUH RULES ENGINE REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Wazuh performs detection using XML-based rules.
+
+Rules evaluate normalized events produced by decoders.
+
+Detection Pipeline:
+
+Raw Log
+    →
+Decoder
+    →
+Rule Matching
+    →
+Correlation
+    →
+Alert
+
+================================================================================
+RULE STRUCTURE
+================================================================================
+
+Basic Rule:
+
+<rule id="100001" level="10">
+    <description>Authentication Failure</description>
+</rule>
+
+Attributes:
+
+id
+level
+overwrite
+frequency
+timeframe
+
+================================================================================
+RULE LEVELS
+================================================================================
+
+0     Ignore
+1-3   Informational
+4-6   Low Severity
+7-9   Medium Severity
+10-12 High Severity
+13-15 Critical Severity
+
+================================================================================
+MATCHING OPERATORS
+================================================================================
+
+<match>
+
+Matches text.
+
+Example:
+
+<match>failed</match>
+
+--------------------------------------------------------------------------------
+
+<regex>
+
+Regular expression matching.
+
+Example:
+
+<regex>powershell.*EncodedCommand</regex>
+
+--------------------------------------------------------------------------------
+
+<field>
+
+Field-specific matching.
+
+Example:
+
+<field name="srcip">10.0.0.1</field>
+
+================================================================================
+RULE CHAINING
+================================================================================
+
+if_sid
+
+References parent rule.
+
+Example:
+
+<rule id="100010" level="12">
+    <if_sid>5503</if_sid>
+</rule>
+
+Purpose:
+
+Multi-stage detection logic.
+
+================================================================================
+GROUPS
+================================================================================
+
+Rules may belong to groups.
+
+Examples:
+
+authentication_failures
+
+web
+
+firewall
+
+malware
+
+windows
+
+linux
+
+================================================================================
+MITRE ATT&CK SUPPORT
+================================================================================
+
+Example:
+
+<mitre>
+    <id>T1110</id>
+</mitre>
+
+Supported Usage:
+
+Technique Mapping
+
+Sub-Technique Mapping
+
+Detection Categorization
+
+================================================================================
+ALERT GENERATION
+================================================================================
+
+Rule Match
+    →
+Alert Creation
+    →
+Indexer Storage
+    →
+Dashboard Visualization
+
+================================================================================
+BEST PRACTICES
+================================================================================
+
+Use decoders first.
+
+Keep rules modular.
+
+Use if_sid relationships.
+
+Map ATT&CK techniques.
+
+Avoid overly broad regex patterns.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

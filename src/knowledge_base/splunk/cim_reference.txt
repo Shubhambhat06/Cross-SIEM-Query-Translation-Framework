@@ -1,0 +1,140 @@
+================================================================================
+SPLUNK COMMON INFORMATION MODEL (CIM)
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+The Common Information Model (CIM) provides a normalized field taxonomy.
+
+Purpose:
+
+    • Vendor Independence
+    • Detection Portability
+    • Cross-Source Correlation
+    • Threat Hunting
+
+================================================================================
+AUTHENTICATION DATA MODEL
+================================================================================
+
+Fields:
+
+    user
+    src
+    dest
+    app
+    action
+
+Examples:
+
+action="success"
+
+action="failure"
+
+================================================================================
+NETWORK TRAFFIC DATA MODEL
+================================================================================
+
+Fields:
+
+    src
+    dest
+    src_port
+    dest_port
+    protocol
+    bytes
+
+================================================================================
+ENDPOINT DATA MODEL
+================================================================================
+
+Fields:
+
+    process
+    process_name
+    parent_process
+    process_id
+
+================================================================================
+CHANGE DATA MODEL
+================================================================================
+
+Fields:
+
+    object
+    object_category
+    user
+
+================================================================================
+MALWARE DATA MODEL
+================================================================================
+
+Fields:
+
+    file_hash
+    file_name
+    signature
+
+================================================================================
+DNS DATA MODEL
+================================================================================
+
+Fields:
+
+    query
+    record_type
+    answer
+
+================================================================================
+WEB DATA MODEL
+================================================================================
+
+Fields:
+
+    url
+    uri_path
+    http_method
+
+================================================================================
+EMAIL DATA MODEL
+================================================================================
+
+Fields:
+
+    sender
+    recipient
+    subject
+
+================================================================================
+FIELD NORMALIZATION
+================================================================================
+
+CIM Field           Description
+
+src                 Source IP
+dest                Destination IP
+user                Username
+process_name        Process Name
+file_name           File Name
+
+================================================================================
+CROSS-SIEM MAPPING
+================================================================================
+
+Splunk CIM          ECS                 QRadar
+
+src                 source.ip          sourceip
+
+dest                destination.ip     destinationip
+
+user                user.name          username
+
+dest_port           destination.port   destinationport
+
+process_name        process.name       process_name
+
+================================================================================
+END OF DOCUMENT
+================================================================================

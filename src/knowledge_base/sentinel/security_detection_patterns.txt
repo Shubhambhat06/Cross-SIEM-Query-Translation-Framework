@@ -1,0 +1,159 @@
+================================================================================
+MICROSOFT SENTINEL SECURITY DETECTION PATTERNS
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+PATTERN 001
+BRUTE FORCE ATTACK
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1110
+
+KQL:
+
+SecurityEvent
+| where EventID == 4625
+| summarize FailureCount=count() by IpAddress
+| where FailureCount > 10
+
+================================================================================
+PATTERN 002
+PASSWORD SPRAYING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1110.003
+
+KQL:
+
+SecurityEvent
+| where EventID == 4625
+| summarize Users=dcount(Account) by IpAddress
+| where Users > 20
+
+================================================================================
+PATTERN 003
+POWERSHELL EXECUTION
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1059.001
+
+KQL:
+
+DeviceProcessEvents
+| where FileName =~ "powershell.exe"
+
+================================================================================
+PATTERN 004
+ENCODED POWERSHELL
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1059.001
+
+KQL:
+
+DeviceProcessEvents
+| where ProcessCommandLine contains "EncodedCommand"
+
+================================================================================
+PATTERN 005
+SCHEDULED TASK CREATION
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1053.005
+
+KQL:
+
+SecurityEvent
+| where EventID == 4698
+
+================================================================================
+PATTERN 006
+PSEXEC LATERAL MOVEMENT
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1021.002
+
+Indicators:
+
+psexec.exe
+
+admin$
+
+service creation
+
+================================================================================
+PATTERN 007
+DNS TUNNELING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1071.004
+
+Indicators:
+
+Long DNS queries
+
+High DNS volume
+
+================================================================================
+PATTERN 008
+COMMAND AND CONTROL BEACONING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1071
+
+Indicators:
+
+Periodic outbound connections
+
+================================================================================
+PATTERN 009
+DATA EXFILTRATION
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1048
+
+Indicators:
+
+Large outbound transfers
+
+Unusual destinations
+
+================================================================================
+PATTERN 010
+RANSOMWARE ACTIVITY
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1486
+
+Indicators:
+
+Mass file modifications
+
+Shadow copy deletion
+
+vssadmin delete shadows
+
+================================================================================
+END OF DOCUMENT
+================================================================================

@@ -1,0 +1,186 @@
+================================================================================
+IBM QRADAR SECURITY DETECTION PATTERNS
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+PATTERN 001
+BRUTE FORCE ATTACK
+--------------------------------------------------------------------------------
+
+Description:
+
+Multiple failed authentication attempts from a single source.
+
+MITRE:
+
+T1110
+
+Detection Logic:
+
+Authentication Failure Events
+
+Grouped By:
+
+    sourceip
+
+Threshold:
+
+    failures > 10
+
+AQL Example:
+
+SELECT sourceip,
+       COUNT(*) AS failures
+FROM events
+WHERE categoryname ILIKE '%authentication failure%'
+GROUP BY sourceip
+HAVING failures > 10
+LAST 24 HOURS
+
+================================================================================
+PATTERN 002
+PASSWORD SPRAYING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1110.003
+
+Indicators:
+
+    Same source IP
+
+    Multiple usernames
+
+Detection Logic:
+
+SELECT sourceip,
+       COUNT(DISTINCT username) AS users
+FROM events
+WHERE categoryname ILIKE '%authentication failure%'
+GROUP BY sourceip
+HAVING users > 20
+LAST 24 HOURS
+
+================================================================================
+PATTERN 003
+POWERSHELL EXECUTION
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1059.001
+
+Indicators:
+
+    powershell.exe
+
+    EncodedCommand
+
+    DownloadString
+
+================================================================================
+PATTERN 004
+SCHEDULED TASK CREATION
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1053.005
+
+Indicators:
+
+    schtasks
+
+    scheduled task
+
+================================================================================
+PATTERN 005
+PSEXEC LATERAL MOVEMENT
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1021.002
+
+Indicators:
+
+    psexec
+
+    admin$
+
+    service creation
+
+================================================================================
+PATTERN 006
+DNS TUNNELING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1071.004
+
+Indicators:
+
+    Long DNS queries
+
+    High DNS frequency
+
+================================================================================
+PATTERN 007
+PORT SCANNING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1046
+
+Indicators:
+
+    Many destination ports
+
+================================================================================
+PATTERN 008
+COMMAND AND CONTROL BEACONING
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1071
+
+Indicators:
+
+    Periodic outbound connections
+
+================================================================================
+PATTERN 009
+DATA EXFILTRATION
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1048
+
+Indicators:
+
+    Large outbound transfers
+
+================================================================================
+PATTERN 010
+RANSOMWARE PRECURSORS
+--------------------------------------------------------------------------------
+
+MITRE:
+
+T1486
+
+Indicators:
+
+    Mass file modifications
+
+    Shadow copy deletion
+
+================================================================================
+END OF DOCUMENT
+================================================================================

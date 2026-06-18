@@ -1,0 +1,86 @@
+================================================================================
+SPLUNK DETECTION ENGINE REFERENCE
+Knowledge Base for NL-SIEM Query Translation
+Version: 1.0
+================================================================================
+
+OVERVIEW
+--------------------------------------------------------------------------------
+Splunk Enterprise Security implements detections using correlation searches.
+
+Core Components:
+
+    • Searches
+    • Correlation Searches
+    • Risk Rules
+    • Notable Events
+    • Adaptive Response Actions
+
+================================================================================
+CORRELATION SEARCHES
+================================================================================
+
+Scheduled SPL searches that generate alerts.
+
+Example:
+
+index=windows EventCode=4625
+| stats count by src_ip
+| where count > 10
+
+================================================================================
+RISK BASED ALERTING
+================================================================================
+
+Risk events accumulate scores.
+
+Example:
+
+Brute Force:
++20
+
+PowerShell EncodedCommand:
++30
+
+Threshold:
+
+100 -> notable
+
+================================================================================
+NOTABLE EVENTS
+================================================================================
+
+Generated alerts.
+
+Components:
+
+    Rule Name
+    Severity
+    MITRE Mapping
+    Risk Score
+
+================================================================================
+ADAPTIVE RESPONSE
+================================================================================
+
+Actions:
+
+    Email
+    Ticket
+    SOAR Playbook
+    Threat Intel Lookup
+
+================================================================================
+MITRE ATT&CK INTEGRATION
+================================================================================
+
+Mappings:
+
+T1110
+T1059
+T1021
+T1048
+
+================================================================================
+END OF DOCUMENT
+================================================================================

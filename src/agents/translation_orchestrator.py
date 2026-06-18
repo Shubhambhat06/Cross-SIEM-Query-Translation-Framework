@@ -63,9 +63,11 @@ from src.ir.schema import IRQuery
 from src.translators import translate_all
 from src.utils.exceptions import NLSIEMError, TranslationError
 from src.utils.logger import get_logger
-
+from src.agents.execution_agent import ExecutionAgent, ExecutionResult
 log = get_logger(__name__)
-
+from src.agents.rule_deployment_agent import (
+    RuleDeploymentAgent
+)
 PromptCondition = Literal["zero_shot", "few_shot", "rag"]
 
 
@@ -107,6 +109,8 @@ class TranslationResult:
 
     # ── Evaluation helpers ────────────────────────────────────────────────
     warnings: list[str] = field(default_factory=list)
+    execution_results: dict[str, ExecutionResult] | None = None
+    deployment_result: Any | None = None
 
     # ─────────────────────────────────────────────
     # Convenience accessors
@@ -156,6 +160,18 @@ class TranslationResult:
             "run_id":           self.run_id,
             "nl_query":         self.nl_query,
             "ir":               self.ir.to_dict(),
+            "execution_results": (
+                    {
+                        k: {
+                            "success": v.success,
+                            "execution_time": v.execution_time,
+                            "error": v.error,
+                        }
+                        for k, v in self.execution_results.items()
+                    }
+                    if self.execution_results
+                    else None
+                ),
             "translations":     self.translations,
             "condition":        self.condition,
             "provider":         self.provider,
@@ -175,6 +191,7 @@ class TranslationResult:
 
     def summary(self) -> str:
         """Human-readable one-block summary for CLI output."""
+
         lines = [
             f"{'─' * 60}",
             f"NL-SIEM Translation Result",
@@ -184,30 +201,62 @@ class TranslationResult:
             f"Condition:  {self.condition}  |  Model: {self.model}",
             f"Elapsed:    {self.elapsed_s}s  |  Parse attempts: {self.parse_attempts}",
             f"Validation: {self.pass_rate:.0%} ({len(self.valid_platforms)}/5 platforms)",
-            f"",
+        ]
+
+        if self.execution_results:
+            lines.append("")
+            lines.append("Execution Results")
+            lines.append("─" * 60)
+
+            for platform, result in self.execution_results.items():
+
+                status = (
+                    "SUCCESS"
+                    if result.success
+                    else "FAILED"
+                )
+
+                lines.append(
+                    f"{platform}: {status} "
+                    f"({result.execution_time:.3f}s)"
+                )
+
+                if result.error:
+                    lines.append(
+                        f"  Error: {result.error}"
+                    )
+
+        lines.extend([
+            "",
             f"── Splunk SPL {'─' * 44}",
             self.splunk,
-            f"",
+            "",
             f"── QRadar AQL {'─' * 44}",
             self.qradar,
-            f"",
+            "",
             f"── Elastic EQL {'─' * 43}",
             self.elastic,
-            f"",
+            "",
             f"── Sentinel KQL {'─' * 42}",
             self.sentinel,
-            f"",
+            "",
             f"── Wazuh XML {'─' * 45}",
             self.wazuh,
             f"{'─' * 60}",
-        ]
-        if self.failed_platforms:
-            lines.append(f"⚠  Failed platforms: {self.failed_platforms}")
-        if self.warnings:
-            for w in self.warnings:
-                lines.append(f"⚠  {w}")
-        return "\n".join(lines)
+        ])
 
+        if self.failed_platforms:
+            lines.append(
+                f"⚠ Failed platforms: {self.failed_platforms}"
+            )
+
+        if self.warnings:
+            for warning in self.warnings:
+                lines.append(
+                    f"⚠ {warning}"
+                )
+
+        return "\n".join(lines)
 
 # ── Translation Orchestrator ──────────────────────────────────────────────
 
@@ -230,6 +279,7 @@ class TranslationOrchestrator:
     def __init__(
         self,
         parser_agent:       ParserAgent,
+        execution_agent: ExecutionAgent | None = None,
         validator:          ValidatorAgent | None        = None,
         refinement_agent:   RefinementAgent | None       = None,
         enable_refinement:  bool                         = True,
@@ -243,8 +293,11 @@ class TranslationOrchestrator:
         self.enable_refinement = enable_refinement
         self.provider          = provider
         self.model             = model
+        self.execution_agent = execution_agent
         self.condition         = condition
-
+        self.rule_deployment_agent = (
+            RuleDeploymentAgent()
+        )
         log.info(
             "TranslationOrchestrator initialised",
             extra={
@@ -323,9 +376,28 @@ class TranslationOrchestrator:
                 client       = client,
                 parser_agent = parser,
             )
+        from src.agents.execution_agent import ExecutionAgent
+
+        execution_agent = ExecutionAgent(
+            connector_configs={
+                "wazuh": {
+                    "host": "https://localhost:55000",
+                    "username": "wazuh",
+                    "password": "u.PDwheS.PDWdPtREknLuyv5SFVrW+I7"
+                },
+
+                # Fill later when Splunk is running
+                "splunk": {
+                    "host": "https://localhost:8089",
+                    "username": "admin",
+                    "password": "changeme"
+                }
+            }
+        )    
 
         return cls(
             parser_agent      = parser,
+            execution_agent    = execution_agent,
             refinement_agent  = refinement,
             enable_refinement = enable_refinement,
             provider          = provider,
@@ -365,7 +437,7 @@ class TranslationOrchestrator:
     # Core pipeline
     # ─────────────────────────────────────────────
 
-    def translate(self, nl_query: str) -> TranslationResult:
+    def translate(self, nl_query: str , execute : bool = False) -> TranslationResult:
         """
         Run the full NL-SIEM pipeline for a single natural language query.
 
@@ -470,12 +542,39 @@ class TranslationOrchestrator:
                     "fixed":     refinement_result.platforms_fixed,
                 },
             )
+        execution_results = None
 
+        if (
+            execute
+            and self.execution_agent is not None
+        ):
+            execution_results = (
+                self.execution_agent.execute_all(
+                    {
+                        "splunk": final_translations.get("splunk", "")
+
+                    }
+                )
+            )
+        deployment_result = None
+        if (
+            execute
+            and final_translations.get("wazuh")
+        ):
+            deployment_result = (
+                self.rule_deployment_agent.deploy(
+                    final_translations["wazuh"]
+                )
+            )
+            print("\nDEPLOYMENT RESULT:")
+            print(deployment_result)
         elapsed = round(time.monotonic() - t0, 3)
 
         result = TranslationResult(
+            execution_results = execution_results,
             run_id             = run_id,
             nl_query           = nl_query,
+            deployment_result   = deployment_result,
             splunk             = final_translations.get("splunk",   ""),
             qradar             = final_translations.get("qradar",   ""),
             elastic            = final_translations.get("elastic",  ""),

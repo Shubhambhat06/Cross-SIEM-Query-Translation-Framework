@@ -78,7 +78,7 @@ def ingest_knowledge_base(
     # ── Step 1: Chunk ──────────────────────────────────────────────────────
     log.info("Step 1/3 — Chunking knowledge base", extra={"kb_dir": str(kb_dir)})
     chunker    = Chunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-    all_chunks = chunker.chunk_directory(kb_dir, glob=glob)
+    all_chunks = chunker.chunk_directory(kb_dir, globs=glob)
 
     files = len(set(c.source for c in all_chunks))
     log.info(

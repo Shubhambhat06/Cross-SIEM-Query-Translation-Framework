@@ -142,7 +142,13 @@ class ParserAgent:
                     nl_query, k=self.rag_k
                 )
                 rag_used = bool(rag_context)
-                log.debug("RAG context retrieved", extra={"chars": len(rag_context)})
+                log.info(
+                    "RAG context retrieved",
+                    extra={
+                        "chars": len(rag_context),
+                        "used": rag_used,
+                    },
+                )
             except Exception as exc:
                 log.warning("RAG retrieval failed, continuing without context",
                             extra={"error": str(exc)})

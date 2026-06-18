@@ -178,7 +178,7 @@ def translate(
             "dry_run": True,
         }
 
-    result = orchestrator.translate(nl_query)
+    result = orchestrator.translate(nl_query , execute=True)
 
     if verbose:
         try:

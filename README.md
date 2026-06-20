@@ -312,6 +312,7 @@ python scripts/export_tables.py \
 ---
 
 ## Repository Structure
+```
 nl-siem/
 │
 ├── configs/                         # Platform-specific connector configs
@@ -415,7 +416,7 @@ nl-siem/
 ├── README.md
 ├── siem_architecture.svg
 └── test_*.py
-
+```
 
 
 

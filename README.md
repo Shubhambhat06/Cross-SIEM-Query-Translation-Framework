@@ -315,34 +315,77 @@ python scripts/export_tables.py \
 
 ```text
 siem-query-translator/
+## Repository Structure
+
+```text
+nl-siem/
 │
-├── README.md
-├── requirements.txt
-├── pyproject.toml
-├── Makefile
-├── .env.example
+├── configs/                         # Platform-specific connector configs
+│   ├── elastic.yaml
+│   ├── qradar.yaml
+│   ├── sentinel.yaml
+│   ├── splunk.yaml
+│   └── wazuh.yaml
+│
+├── data/                            # SIEMBench dataset
+│   ├── siembench.train.jsonl
+│   ├── siembench.dev.jsonl
+│   ├── siembench.test.jsonl
+│   ├── manifest.json
+│   ├── stats.json
+│   └── DATASET_CARD.md
+│
+├── generated_rules/                 # Generated detection content
+│   └── local_rules.xml
+│
+├── scripts/
+│   ├── translate_query.py           # Main NL-SIEM entrypoint
+│   ├── ingest_knowledge_base.py
+│   ├── generate_dataset.py
+│   ├── run_evaluation.py
+│   ├── export_tables.py
+│   ├── test_splunk_connection.py
+│   └── test_wazuh_connection.py
 │
 ├── src/
+│   │
 │   ├── agents/
 │   │   ├── parser_agent.py
 │   │   ├── validator_agent.py
+│   │   ├── refinement_agent.py
 │   │   ├── translation_orchestrator.py
-│   │   └── refinement_agent.py
+│   │   ├── execution_agent.py
+│   │   └── rule_deployment_agent.py
+│   │
+│   ├── connectors/
+│   │   ├── base.py
+│   │   ├── factory.py
+│   │   ├── elastic_connector.py
+│   │   ├── splunk_connector.py
+│   │   └── wazuh_connector.py
 │   │
 │   ├── ir/
 │   │   ├── schema.py
 │   │   ├── validator.py
-│   │   ├── examples.json
-│   │   └── ir_to_nl.py
+│   │   ├── ir_to_nl.py
+│   │   └── examples.json
 │   │
 │   ├── translators/
 │   │   ├── base.py
+│   │   ├── field_mapping.py
 │   │   ├── splunk.py
 │   │   ├── qradar.py
 │   │   ├── elastic.py
 │   │   ├── sentinel.py
 │   │   ├── wazuh.py
-│   │   └── field_mapping.py
+│   │   └── esql_converter.py
+│   │
+│   ├── rag/
+│   │   ├── chunker.py
+│   │   ├── embedder.py
+│   │   ├── vector_store.py
+│   │   ├── retriever.py
+│   │   └── ingest.py
 │   │
 │   ├── llm/
 │   │   ├── client.py
@@ -350,64 +393,36 @@ siem-query-translator/
 │   │   ├── response_parser.py
 │   │   └── token_counter.py
 │   │
-│   ├── rag/
-│   │   ├── embedder.py
-│   │   ├── vector_store.py
-│   │   ├── retriever.py
-│   │   ├── chunker.py
-│   │   └── ingest.py
-│   │
 │   ├── evaluation/
 │   │   ├── syntax_validator.py
 │   │   ├── semantic_scorer.py
 │   │   ├── execution_match.py
-│   │   ├── ablation.py
 │   │   ├── error_analyzer.py
-│   │   └── metrics_aggregator.py
+│   │   ├── metrics_aggregator.py
+│   │   └── ablation.py
+│   │
+│   ├── knowledge_base/
+│   │   ├── splunk/
+│   │   ├── qradar/
+│   │   ├── elastic/
+│   │   ├── sentinel/
+│   │   ├── wazuh/
+│   │   └── mitre/
 │   │
 │   └── utils/
 │       ├── config.py
 │       ├── logger.py
-│       ├── exceptions.py
-│       └── file_io.py
-│
-├── knowledge_base/
-│   ├── splunk/
-│   ├── qradar/
-│   ├── elastic/
-│   ├── sentinel/
-│   ├── wazuh/
-│   └── mitre/
-│
-├── datasets/
-│   ├── raw/
-│   ├── benchmark/
-│   └── processed/
-│
-├── experiments/
-│   ├── few_shot/
-│   ├── zero_shot/
-│   ├── rag/
-│   └── results/
-│       ├── raw/
-│       └── aggregated/
-│
-├── scripts/
-│   ├── run_evaluation.py
-│   ├── generate_dataset.py
-│   ├── export_tables.py
-│   ├── ingest_knowledge_base.py
-│   └── translate_query.py
+│       ├── file_io.py
+│       └── exceptions.py
 │
 ├── tests/
-│   ├── test_ir_schema.py
-│   ├── test_translators.py
-│   ├── test_evaluation.py
-│   └── test_pipeline_e2e.py
+│   └── connectors/
 │
-└── docs/
-    ├── architecture/
-    └── paper/
+├── README.md
+├── siem_architecture.svg
+└── test_*.py
+
+
 ```
 
 ### Directory Overview

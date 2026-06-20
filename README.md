@@ -264,7 +264,7 @@ print(result["sentinel"])    # Microsoft Sentinel KQL
 print(result["wazuh"])       # Wazuh XML Rule
 ```
 ## Execution and Validation Layer
-```
+
 Unlike traditional query-generation systems, NL-SIEM supports execution-backed validation through a connector-based architecture.
 
 Generated detections can be executed directly against supported SIEM environments using platform-specific connectors. Execution results are collected and returned to the framework, enabling validation of translated detections against live telemetry.

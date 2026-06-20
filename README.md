@@ -263,6 +263,33 @@ print(result["elastic"])     # Elastic EQL
 print(result["sentinel"])    # Microsoft Sentinel KQL
 print(result["wazuh"])       # Wazuh XML Rule
 ```
+## Execution and Validation Layer
+```
+Unlike traditional query-generation systems, NL-SIEM supports execution-backed validation through a connector-based architecture.
+
+Generated detections can be executed directly against supported SIEM environments using platform-specific connectors. Execution results are collected and returned to the framework, enabling validation of translated detections against live telemetry.
+
+### Supported Connectors
+
+| Platform           | Capability                           |        |
+| ------------------ | ------------------------------------ | ------ |
+| Elastic Security   | Query execution via Elastic Cloud ES | QL API |
+| Wazuh              | Rule deployment and validation       |        |
+| Splunk             | Query execution (planned)            |        |
+| IBM QRadar         | Query execution (planned)            |        |
+| Microsoft Sentinel | Query execution (planned)            |        |
+
+### Execution Pipeline
+
+Natural Language Query
+→ Intermediate Representation
+→ Platform Translation
+→ Execution Agent
+→ SIEM Connector
+→ Live Results
+
+This design allows NL-SIEM to evaluate not only syntactic correctness but also operational validity of generated detections.
+```
 
 ---
 

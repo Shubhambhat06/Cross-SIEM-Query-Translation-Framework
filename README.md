@@ -2,7 +2,9 @@
 
 <h1>NL-SIEM</h1>
 
-<h3>Cross-Platform SIEM Query Translation via Large Language Models<br>and Intermediate Representation</h3>
+<h3>Cross-Platform Detection Engineering and Execution Validation
+via Large Language Models, Intermediate Representation,
+and Multi-SIEM Connectors</h3>
 
 <p>
   <a href="https://arxiv.org/abs/XXXX.XXXXX">

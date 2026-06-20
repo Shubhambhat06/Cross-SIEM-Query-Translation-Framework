@@ -290,7 +290,7 @@ Natural Language Query
 
 This design allows NL-SIEM to evaluate not only syntactic correctness but also operational validity of generated detections.
 ```
-
+```
 ---
 
 ## Running Evaluations

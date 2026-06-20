@@ -312,12 +312,6 @@ python scripts/export_tables.py \
 ---
 
 ## Repository Structure
-
-```text
-siem-query-translator/
-## Repository Structure
-
-```text
 nl-siem/
 │
 ├── configs/                         # Platform-specific connector configs
@@ -423,7 +417,7 @@ nl-siem/
 └── test_*.py
 
 
-```
+
 
 ### Directory Overview
 

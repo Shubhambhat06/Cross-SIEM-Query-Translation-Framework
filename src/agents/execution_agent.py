@@ -35,12 +35,15 @@ class ExecutionAgent:
     ) -> ExecutionResult:
 
         start = perf_counter()
-
+        print(f"\nEXECUTING {platform.upper()}...")
         try:
 
             connector = ConnectorFactory.create(
                 platform,
-                self.connector_configs[platform]
+                self.connector_configs.get(
+                    platform,
+                    {}
+                )
             )
 
             connector.connect()
@@ -48,7 +51,7 @@ class ExecutionAgent:
             results = connector.execute(
                 query
             )
-
+            print(f"EXECUTION SUCCESS: {platform}")
             return ExecutionResult(
                 platform=platform,
                 query=query,
@@ -60,7 +63,8 @@ class ExecutionAgent:
             )
 
         except Exception as exc:
-
+            print(f"EXECUTION FAILED: {platform}")
+            print(exc)
             return ExecutionResult(
                 platform=platform,
                 query=query,
@@ -78,15 +82,17 @@ class ExecutionAgent:
 
         results = {}
 
+        executable_platforms = {
+            "wazuh",
+            "elastic"
+        }
+
         for platform, query in translations.items():
 
             if not query:
                 continue
 
-            if platform not in (
-                "splunk",
-                "wazuh"
-            ):
+            if platform not in executable_platforms:
                 continue
 
             results[platform] = self.execute(

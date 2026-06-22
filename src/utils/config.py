@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     google_api_key: str = Field(default="", alias="GOOGLE_API_KEY")
-
+    groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     # ── Model config ─────────────────────────────────────────────────────
     model_name: Literal[
         "gpt-4o",
@@ -47,10 +47,17 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(default=3, alias="LLM_MAX_RETRIES")
 
     # ── Elasticsearch ─────────────────────────────────────────────────────
-    es_host: str = Field(default="http://localhost:9200", alias="ES_HOST")
-    es_user: str = Field(default="elastic", alias="ES_USER")
-    es_password: str = Field(default="changeme", alias="ES_PASSWORD")
+    es_host: str = Field(
+    default="",
+    alias="ELASTIC_HOST"
+    )
 
+    es_api_key: str = Field(
+        default="",
+        alias="ELASTIC_API_KEY"
+    )
+
+    
     # ── RAG config ────────────────────────────────────────────────────────
     embedding_model: str = Field(
         default="all-MiniLM-L6-v2", alias="EMBEDDING_MODEL"

@@ -77,11 +77,11 @@ def _translate_dataset(
     """
     from src.agents.translation_orchestrator import TranslationOrchestrator
 
-    orchestrator = TranslationOrchestrator(
-        platforms   = list(PLATFORMS),
-        use_rag     = use_rag,
-        refine      = refine,
-        store_path  = str(store_path) if store_path else None,
+    orchestrator = TranslationOrchestrator.from_env(
+    condition="rag" if use_rag else "few_shot",
+    enable_rag=use_rag,
+    enable_refinement=refine,
+    store_path=str(store_path) if store_path else "src/rag/store",
     )
 
     results  = []
@@ -181,11 +181,15 @@ def _run_evaluation(
 
         def _make_translate(condition):
             def _fn(nl_query, cond):
-                orch = TranslationOrchestrator(
-                    platforms  = list(PLATFORMS),
-                    use_rag    = (cond in ("B", "C")),
-                    refine     = (cond == "C"),
-                )
+                orch = TranslationOrchestrator.from_env(
+                condition=(
+                    "zero_shot" if cond == "A"
+                    else "few_shot" if cond == "B"
+                    else "rag"
+                ),
+                enable_rag=(cond == "C"),
+                enable_refinement=False,
+            )
                 out = orch.translate(nl_query)
                 return out.translations if hasattr(out, "translations") else out
             return _fn

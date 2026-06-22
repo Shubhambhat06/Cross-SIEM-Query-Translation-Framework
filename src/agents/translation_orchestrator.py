@@ -386,6 +386,7 @@ class TranslationOrchestrator:
                     "password": "u.PDwheS.PDWdPtREknLuyv5SFVrW+I7"
                 },
 
+
                 # Fill later when Splunk is running
                 "splunk": {
                     "host": "https://localhost:8089",
@@ -551,8 +552,9 @@ class TranslationOrchestrator:
             execution_results = (
                 self.execution_agent.execute_all(
                     {
-                        "splunk": final_translations.get("splunk", "")
-
+                        "splunk": final_translations.get("splunk", ""),
+                        "elastic": final_translations.get("elastic", ""),
+                        "wazuh": final_translations.get("wazuh", ""),
                     }
                 )
             )

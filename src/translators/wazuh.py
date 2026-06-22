@@ -91,7 +91,7 @@ EVENT_CONFIG: dict[str, dict] = {
 }
 
 # Base rule ID for generated custom rules
-BASE_RULE_ID = 100001
+BASE_RULE_ID = 100002
 
 
 class WazuhTranslator(BaseSIEMTranslator):

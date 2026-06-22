@@ -1,5 +1,6 @@
 from src.connectors.splunk_connector import SplunkConnector
 from src.connectors.wazuh_connector import WazuhConnector
+from src.connectors.elastic_connector import ElasticConnector
 
 
 class ConnectorFactory:
@@ -14,6 +15,9 @@ class ConnectorFactory:
 
         if platform == "splunk":
             return SplunkConnector(**config)
+
+        if platform == "elastic":
+            return ElasticConnector()
 
         if platform == "wazuh":
             return WazuhConnector(**config)

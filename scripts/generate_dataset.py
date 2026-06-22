@@ -111,70 +111,436 @@ DEFAULT_SEEDS = _ROOT / "data" / "seed_queries.jsonl"
 # ParserAgent.parse() already consumes, so this expansion needs zero changes
 # anywhere else in the pipeline. Categories broadened beyond the original
 # six to widen ATT&CK coverage (cloud/IAM, web, malware/C2, email, insider).
+# ── Built-in seed queries (used when no --seeds file is provided) ─────────────
+#
+# v2.0 — 250 research-grade seeds across 14 categories mapping to all 11
+# ATT&CK tactics (Initial Access, Execution, Persistence, Privilege Escalation,
+# Defense Evasion, Credential Access, Discovery, Lateral Movement, Collection,
+# Exfiltration, Impact) and seven modern environments (Windows, Linux, Active
+# Directory, AWS, Azure, Containers/Kubernetes, Email, Web Applications).
+#
+# Target category counts:
+#   authentication: 25  |  network: 25      |  process: 25
+#   persistence: 20     |  privilege: 20    |  discovery: 20
+#   credential_access: 20  |  lateral_movement: 20
+#   exfiltration: 15    |  impact: 15       |  cloud: 20
+#   container: 15       |  web: 15          |  email: 15
+#
+# Schema: {nl_query, category, complexity}  — unchanged from v1 so ParserAgent
+# and all downstream pipeline components require zero modification.
+#
+# Every seed is written to be translatable into:
+#   Splunk SPL  ·  Elastic EQL/KQL  ·  Microsoft Sentinel KQL
+#   IBM QRadar AQL  ·  Wazuh rules (XML/syscheck/decoder)
+#
+# Detection-engineering principles applied per seed:
+#   • Concrete thresholds (counts, time windows, byte sizes) so translators can
+#     emit deterministic WHERE / stats clauses rather than free-text stubs.
+#   • Named log sources / event IDs / field names where ATT&CK or vendor docs
+#     ground them (Windows Security, Sysmon, CloudTrail, AuditD, CEF/LEEF).
+#   • No paraphrases of existing seeds — every entry represents a distinct
+#     detection scenario grounded in public threat intelligence or ATT&CK T-IDs.
 _BUILTIN_SEEDS = [
-    # Authentication
-    {"nl_query": "Detect failed SSH login attempts from a single IP address exceeding 10 failures in 5 minutes", "category": "authentication", "complexity": "medium"},
-    {"nl_query": "Alert on successful login after multiple consecutive failures (brute-force success)", "category": "authentication", "complexity": "high"},
-    {"nl_query": "Find accounts with logins from more than 3 different countries within 24 hours", "category": "authentication", "complexity": "high"},
-    {"nl_query": "Detect password spray attacks targeting multiple accounts from one source IP", "category": "authentication", "complexity": "high"},
-    {"nl_query": "Alert when a privileged account logs in outside business hours", "category": "authentication", "complexity": "medium"},
-    {"nl_query": "Find all failed Windows logon events with event ID 4625 in the last hour", "category": "authentication", "complexity": "low"},
-    {"nl_query": "Detect impossible travel: same account authenticating from two countries less than an hour apart", "category": "authentication", "complexity": "high"},
-    {"nl_query": "Alert on MFA being disabled for a user account immediately followed by a login", "category": "authentication", "complexity": "high"},
-    # Network
-    {"nl_query": "Detect port scanning activity: more than 50 unique destination ports from one source in 1 minute", "category": "network", "complexity": "medium"},
-    {"nl_query": "Alert on DNS queries to known malicious domains", "category": "network", "complexity": "medium"},
-    {"nl_query": "Find large outbound data transfers over 100 MB in a single session", "category": "network", "complexity": "medium"},
-    {"nl_query": "Detect connections to Tor exit nodes", "category": "network", "complexity": "low"},
-    {"nl_query": "Alert on SMB lateral movement: connections to more than 5 internal hosts within 10 minutes", "category": "network", "complexity": "high"},
-    {"nl_query": "Detect beaconing: a host contacting the same external IP at regular intervals over 6 hours", "category": "network", "complexity": "high"},
-    {"nl_query": "Alert on outbound traffic on non-standard high ports from a server host", "category": "network", "complexity": "low"},
-    # Process / Execution
-    {"nl_query": "Detect PowerShell execution with encoded command-line arguments", "category": "process", "complexity": "medium"},
-    {"nl_query": "Alert on processes spawned by Office applications (Word, Excel) executing cmd or powershell", "category": "process", "complexity": "high"},
-    {"nl_query": "Find mimikatz-like activity: lsass.exe memory reads by non-system processes", "category": "process", "complexity": "high"},
-    {"nl_query": "Detect execution of unsigned binaries from temp or downloads directories", "category": "process", "complexity": "medium"},
-    {"nl_query": "Alert on living-off-the-land binaries such as certutil or rundll32 making outbound network connections", "category": "process", "complexity": "high"},
-    # File
-    {"nl_query": "Alert on mass file deletion: more than 100 files deleted in under 60 seconds (ransomware indicator)", "category": "file", "complexity": "high"},
-    {"nl_query": "Detect creation of executable files in system32 directory by non-system accounts", "category": "file", "complexity": "medium"},
-    {"nl_query": "Find mass file renames to a common ransomware extension within a short time window", "category": "file", "complexity": "high"},
-    # Persistence / Privilege
-    {"nl_query": "Detect new scheduled tasks created by non-administrative users", "category": "persistence", "complexity": "medium"},
-    {"nl_query": "Alert when a user account is added to the Domain Admins group", "category": "privilege", "complexity": "low"},
-    {"nl_query": "Find registry run key modifications that add persistence", "category": "persistence", "complexity": "medium"},
-    {"nl_query": "Detect creation of a new local administrator account outside change-management hours", "category": "privilege", "complexity": "medium"},
-    # Exfiltration
-    {"nl_query": "Detect unusually high number of emails sent by a single user in one hour", "category": "exfiltration", "complexity": "medium"},
-    {"nl_query": "Alert on FTP uploads larger than 50 MB to external IPs", "category": "exfiltration", "complexity": "low"},
-    {"nl_query": "Find data uploaded to a personal cloud storage domain not on the corporate allow-list", "category": "exfiltration", "complexity": "medium"},
-    # Anomaly / UEBA
-    {"nl_query": "Find users accessing an abnormally high number of files compared to their 30-day baseline", "category": "anomaly", "complexity": "high"},
-    {"nl_query": "Detect service account making interactive logins", "category": "anomaly", "complexity": "low"},
-    {"nl_query": "Alert on any process making DNS requests at a rate exceeding 1000 per minute (DNS tunnelling)", "category": "anomaly", "complexity": "high"},
-    # Cloud / IAM
-    {"nl_query": "Detect creation of an access key for an IAM user that has been inactive for over 90 days", "category": "cloud", "complexity": "medium"},
-    {"nl_query": "Alert on an S3 bucket policy change that makes a bucket publicly readable", "category": "cloud", "complexity": "high"},
-    {"nl_query": "Find console logins to a cloud account from a region the organization has never used before", "category": "cloud", "complexity": "high"},
-    {"nl_query": "Detect disabling of cloud audit logging (e.g. CloudTrail) by any principal", "category": "cloud", "complexity": "medium"},
-    # Web / API
-    {"nl_query": "Detect SQL injection patterns in web server access logs", "category": "web", "complexity": "medium"},
-    {"nl_query": "Alert on a single API key making more than 1000 requests per minute", "category": "web", "complexity": "low"},
-    {"nl_query": "Find repeated 401 and 403 responses from the same IP against an authentication endpoint", "category": "web", "complexity": "medium"},
-    # Malware / C2
-    {"nl_query": "Detect a process writing to and then executing a file from a world-writable directory", "category": "malware", "complexity": "high"},
-    {"nl_query": "Alert on outbound connections to a domain registered within the last 7 days", "category": "malware", "complexity": "medium"},
-    # Email / Phishing
-    {"nl_query": "Detect creation of an inbox forwarding rule to an external email address", "category": "email", "complexity": "medium"},
-    {"nl_query": "Alert when a user clicks a link in an email later confirmed as phishing", "category": "email", "complexity": "low"},
-    # Insider / Data handling
-    {"nl_query": "Find a user downloading a large volume of files shortly before their termination date", "category": "insider", "complexity": "high"},
-    {"nl_query": "Detect printing of documents tagged as confidential outside business hours", "category": "insider", "complexity": "medium"},
-    # Container / Kubernetes
-    {"nl_query": "Alert on a container running with privileged mode enabled", "category": "container", "complexity": "medium"},
-    {"nl_query": "Detect a kubectl exec into a production pod from an IP outside the corporate VPN", "category": "container", "complexity": "high"},
-]
 
+    # ══════════════════════════════════════════════════════════════════════════
+    # AUTHENTICATION  (25)  — ATT&CK: Initial Access · Credential Access
+    # Covers: Windows, Linux, Active Directory, AWS, Azure, MFA, Kerberos
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # --- Brute-force / spray ---
+    {"nl_query": "Detect failed SSH login attempts from a single IP exceeding 10 failures within 5 minutes (Linux brute-force)", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Alert on a password spray attack: one source IP failing authentication against more than 20 distinct accounts within 10 minutes", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Find Windows event ID 4625 (logon failure) with logon type 3 (network) exceeding 15 failures per source IP in 5 minutes", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Detect RDP brute-force: more than 20 failed Windows event 4625 logon type 10 events from one external IP in 10 minutes", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Alert on Kerberos pre-authentication failure (event ID 4771) for more than 10 accounts from the same source within 5 minutes (AS-REP or password spray)", "category": "authentication", "complexity": "high"},
+
+    # --- Brute-force success / credential stuffing ---
+    {"nl_query": "Alert on successful login (event ID 4624) within 60 seconds after five or more failed logons (event ID 4625) for the same account", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Detect credential-stuffing success: account login with a source IP that produced more than 50 failed attempts across different accounts in the preceding hour", "category": "authentication", "complexity": "high"},
+
+    # --- Geo / impossible travel ---
+    {"nl_query": "Detect impossible travel: same user account authenticating from two different countries less than 90 minutes apart", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Find logins from countries outside the organisation's baseline operating regions for any privileged account", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Alert when a user authenticates from a new ASN that has never been observed in the last 30 days", "category": "authentication", "complexity": "high"},
+
+    # --- Privileged / off-hours ---
+    {"nl_query": "Alert when a Domain Admin account (member of group SID S-1-5-21-*-512) logs in interactively between 20:00 and 06:00 local time", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Detect service accounts (accounts with a $ suffix in sAMAccountName) performing interactive logons (event ID 4624 logon type 2 or 10)", "category": "authentication", "complexity": "low"},
+
+    # --- MFA / token abuse ---
+    {"nl_query": "Alert when MFA is disabled for a user account (Azure AD audit log operation DisableStrongAuthentication) followed by a successful login within 15 minutes", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Detect an OAuth refresh token used from a different IP address or user-agent than the one that issued the original access token", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Alert on more than 5 MFA push-notification denials for the same account within 10 minutes (MFA fatigue attack)", "category": "authentication", "complexity": "medium"},
+
+    # --- AWS / Azure cloud authentication ---
+    {"nl_query": "Detect AWS console sign-in failures exceeding 5 attempts in 10 minutes for the same IAM user from the same source IP", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Alert on AWS root account console login at any time (root usage should be zero in a well-governed account)", "category": "authentication", "complexity": "low"},
+    {"nl_query": "Detect Azure AD sign-in risk level 'high' events that result in a successful authentication (risky sign-in bypassed conditional access)", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Find Azure AD guest account logins originating from IP addresses flagged by Microsoft Threat Intelligence as malicious", "category": "authentication", "complexity": "medium"},
+
+    # --- Kerberos / Active Directory protocol attacks ---
+    {"nl_query": "Detect Kerberoasting: Windows event ID 4769 requesting a service ticket with encryption type 0x17 (RC4-HMAC) for a service account", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Alert on AS-REP roasting: Windows event ID 4768 for accounts with Kerberos pre-authentication disabled (UserAccountControl bit 0x400000)", "category": "authentication", "complexity": "high"},
+    {"nl_query": "Detect a Pass-the-Ticket attack: event ID 4768 or 4769 with a ticket-granting ticket requested from a host that did not previously authenticate via normal logon event 4624", "category": "authentication", "complexity": "high"},
+
+    # --- Account lockout / enumeration ---
+    {"nl_query": "Alert when more than 10 accounts reach lockout status (event ID 4740) within a 5-minute window on the same domain controller", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Detect LDAP enumeration of user accounts: more than 200 LDAP queries from a single workstation to a domain controller within 1 minute", "category": "authentication", "complexity": "medium"},
+    {"nl_query": "Alert on a new device (first-seen device ID) logging in to a privileged account, where the account has not authenticated from that device in the last 60 days", "category": "authentication", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # NETWORK  (25)  — ATT&CK: Command and Control · Exfiltration · Discovery
+    # Covers: DNS, SMB, beaconing, TOR, protocol anomalies, tunnelling
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # --- Scanning / reconnaissance ---
+    {"nl_query": "Detect horizontal port scan: single source IP contacting more than 50 unique destination IPs on the same port within 60 seconds", "category": "network", "complexity": "medium"},
+    {"nl_query": "Detect vertical port scan: single source IP hitting more than 100 unique destination ports on one target host within 60 seconds", "category": "network", "complexity": "medium"},
+    {"nl_query": "Alert on ICMP sweep: more than 254 ICMP echo requests from one source to a /24 subnet within 30 seconds", "category": "network", "complexity": "low"},
+    {"nl_query": "Detect SYN scan activity: more than 1000 TCP SYN packets without completing the three-way handshake from one source in 60 seconds", "category": "network", "complexity": "medium"},
+
+    # --- C2 / beaconing ---
+    {"nl_query": "Detect beaconing behaviour: a host making outbound HTTP or HTTPS connections to the same external IP at intervals of less than 60 seconds variance over a 6-hour window", "category": "network", "complexity": "high"},
+    {"nl_query": "Alert on long-duration low-bandwidth sessions: TCP session lasting more than 4 hours transferring less than 1 KB per minute (possible C2 keep-alive)", "category": "network", "complexity": "high"},
+    {"nl_query": "Detect DNS-over-HTTPS (DoH) connections from internal hosts to non-approved resolvers such as 8.8.8.8:443 or 1.1.1.1:443", "category": "network", "complexity": "medium"},
+
+    # --- DNS anomalies ---
+    {"nl_query": "Alert on DNS queries to known malicious domains based on a threat-intelligence feed match in the last 24 hours", "category": "network", "complexity": "medium"},
+    {"nl_query": "Detect DNS tunnelling: a single host making more than 500 DNS TXT or NULL record queries per minute", "category": "network", "complexity": "high"},
+    {"nl_query": "Alert on newly observed domains (registered within 7 days) receiving DNS queries from internal hosts for the first time", "category": "network", "complexity": "medium"},
+    {"nl_query": "Detect fast-flux DNS: same hostname resolving to more than 10 different IP addresses within 60 minutes", "category": "network", "complexity": "high"},
+    {"nl_query": "Alert when an internal host queries a domain with a DGA-like pattern: entropy score above 3.5 and no prior resolution history", "category": "network", "complexity": "high"},
+
+    # --- Tor / anonymiser ---
+    {"nl_query": "Detect outbound connections to known Tor exit node IP addresses from any internal host", "category": "network", "complexity": "low"},
+    {"nl_query": "Alert on connections to Tor guard relays on ports 9001 or 9030 from internal hosts", "category": "network", "complexity": "low"},
+
+    # --- Data volume / exfil indicators ---
+    {"nl_query": "Alert on outbound network sessions transferring more than 500 MB to a single external IP in under 10 minutes from a workstation", "category": "network", "complexity": "medium"},
+    {"nl_query": "Detect SMTP traffic from an internal workstation directly to an external mail server (bypassing the corporate mail relay)", "category": "network", "complexity": "low"},
+    {"nl_query": "Alert on FTP or SFTP sessions initiated from a server to an external IP not on the approved transfer list", "category": "network", "complexity": "low"},
+
+    # --- Protocol / port anomalies ---
+    {"nl_query": "Detect non-HTTP traffic on TCP port 80 or 443 (protocol mismatch indicating tunnelling or C2 over common ports)", "category": "network", "complexity": "high"},
+    {"nl_query": "Alert on ICMP packets with payload sizes greater than 1000 bytes from internal hosts (possible ICMP tunnelling)", "category": "network", "complexity": "medium"},
+    {"nl_query": "Detect internal hosts communicating over uncommon egress ports (not 80, 443, 22, 53, 25, 8080) to the internet", "category": "network", "complexity": "low"},
+    {"nl_query": "Alert on SMB connections (TCP 445) from workstations to external internet IP addresses (lateral movement staging or data exfiltration via SMB)", "category": "network", "complexity": "medium"},
+
+    # --- Lateral movement network indicators ---
+    {"nl_query": "Detect SMB lateral movement: a single internal host connecting to more than 5 other internal hosts via TCP 445 within 10 minutes", "category": "network", "complexity": "high"},
+    {"nl_query": "Detect internal RDP pivoting: workstation establishing RDP connections (TCP 3389) to more than 3 other internal hosts within 10 minutes", "category": "network", "complexity": "high"},
+
+    # --- Threat-intel / blocklist ---
+    {"nl_query": "Alert on any network connection to IP addresses present in the current threat-intelligence IOC feed with severity high or critical", "category": "network", "complexity": "low"},
+    {"nl_query": "Detect SSL/TLS certificate subject CN mismatches against known malware C2 certificate fingerprints in threat-intel feeds", "category": "network", "complexity": "high"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PROCESS  (25)  — ATT&CK: Execution · Defense Evasion · Credential Access
+    # Covers: Windows, Linux, LOLBins, macOS, script interpreters, injection
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # --- PowerShell abuse ---
+    {"nl_query": "Detect PowerShell launched with -EncodedCommand or -enc argument (Base64-encoded payload delivery)", "category": "process", "complexity": "medium"},
+    {"nl_query": "Alert on PowerShell downloading content: process command line contains DownloadString, DownloadFile, WebClient, or Invoke-WebRequest", "category": "process", "complexity": "medium"},
+    {"nl_query": "Detect PowerShell executing from a non-standard parent process (not explorer.exe, services.exe, or scheduled task host)", "category": "process", "complexity": "high"},
+    {"nl_query": "Alert on PowerShell with execution policy Bypass and a script block loading a reflective assembly from memory (AMSI bypass pattern)", "category": "process", "complexity": "high"},
+    {"nl_query": "Detect PowerShell Remoting sessions (WinRM, port 5985/5986) initiated from a workstation to more than 2 other internal hosts within 10 minutes", "category": "process", "complexity": "high"},
+
+    # --- Office macro / phishing execution ---
+    {"nl_query": "Alert on child processes spawned by WINWORD.EXE, EXCEL.EXE, or POWERPNT.EXE that are cmd.exe, powershell.exe, wscript.exe, or mshta.exe (T1566.001)", "category": "process", "complexity": "high"},
+    {"nl_query": "Detect MSHTA.EXE executing a remote HTA file from an external URL (mshta http:// or mshta https:// command line)", "category": "process", "complexity": "high"},
+
+    # --- LOLBin abuse ---
+    {"nl_query": "Detect certutil.exe invoked with -decode or -urlcache arguments (payload download or Base64 decode via LOLBin)", "category": "process", "complexity": "medium"},
+    {"nl_query": "Alert on regsvr32.exe loading a remote scriptlet (command line contains http:// or https:// - Squiblydoo technique)", "category": "process", "complexity": "high"},
+    {"nl_query": "Detect rundll32.exe executing a DLL from the TEMP or APPDATA directory with a suspicious export name (shell32 or advpack ordinal abuse)", "category": "process", "complexity": "high"},
+    {"nl_query": "Alert on wmic.exe process call create invoking a command string that contains powershell or cmd (WMI execution for lateral movement staging)", "category": "process", "complexity": "high"},
+    {"nl_query": "Detect msiexec.exe running with /q /i flags from a network UNC path or external URL", "category": "process", "complexity": "medium"},
+    {"nl_query": "Alert on bitsadmin.exe or bitsadmin transfer command downloading a file to a user-writable directory", "category": "process", "complexity": "medium"},
+
+    # --- Credential dumping process indicators ---
+    {"nl_query": "Detect LSASS memory access: non-system processes (not werfault.exe or windows error reporting) opening a handle to lsass.exe with PROCESS_VM_READ permissions (Sysmon event ID 10)", "category": "process", "complexity": "high"},
+    {"nl_query": "Alert on procdump.exe or task manager being used to create a memory dump of lsass.exe", "category": "process", "complexity": "high"},
+
+    # --- Process injection ---
+    {"nl_query": "Detect process injection: a process calling VirtualAllocEx followed by WriteProcessMemory and CreateRemoteThread into a different process (Sysmon events 8 and 10)", "category": "process", "complexity": "high"},
+    {"nl_query": "Alert on DLL injection via SetWindowsHookEx targeting a process in a different session from the injecting process", "category": "process", "complexity": "high"},
+
+    # --- Unsigned / suspicious binary execution ---
+    {"nl_query": "Detect execution of unsigned PE files from user-writable directories (TEMP, AppData, Downloads) on Windows endpoints", "category": "process", "complexity": "medium"},
+    {"nl_query": "Alert on executable files with a .txt, .pdf, or .jpg extension being launched as a process (double-extension masquerading)", "category": "process", "complexity": "medium"},
+    {"nl_query": "Detect scripts (VBScript, JScript, Python) executed from a browser download directory within 5 minutes of the file being created", "category": "process", "complexity": "high"},
+
+    # --- Linux process anomalies ---
+    {"nl_query": "Detect reverse shell spawned via bash: process executing bash -i with output redirection to /dev/tcp or nc -e /bin/bash pattern", "category": "process", "complexity": "high"},
+    {"nl_query": "Alert on crontab modifications made by a non-root user followed by execution of a new process not previously seen on that host", "category": "process", "complexity": "medium"},
+    {"nl_query": "Detect LD_PRELOAD hijacking: a process launched with LD_PRELOAD environment variable pointing to a non-system library path", "category": "process", "complexity": "high"},
+
+    # --- Suspicious interpreter chains ---
+    {"nl_query": "Alert on cmd.exe spawned as a child of svchost.exe with a command line not matching known Windows service invocation patterns", "category": "process", "complexity": "high"},
+    {"nl_query": "Detect python.exe or python3 executing a base64-encoded payload inline via the -c flag", "category": "process", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PERSISTENCE  (20)  — ATT&CK: Persistence
+    # Covers: registry, scheduled tasks, services, boot, startup, WMI subs
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect modifications to Windows registry Run or RunOnce keys (HKLM or HKCU) by a non-system process (T1547.001)", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Alert on creation of a new Windows scheduled task with an action pointing to a file in a user-writable directory (Sysmon event 1 / Security event 4698)", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Detect a new Windows service being installed (event ID 7045) with a binary path in TEMP, AppData, or a UNC share", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Alert on modifications to the Windows BITS job queue that add a new transfer job pointing to an external URL (T1197)", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Detect WMI event subscription persistence: creation of a __EventFilter, __EventConsumer, or __FilterToConsumerBinding object in the WMI repository (T1546.003)", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Alert on modifications to the Startup folder for any user profile by a non-administrative process", "category": "persistence", "complexity": "low"},
+    {"nl_query": "Detect DLL search-order hijacking: a non-system DLL placed in the same directory as a legitimate signed executable that does not have an absolute DLL load path", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Alert on Image File Execution Options (IFEO) registry key modification to add a Debugger value pointing to a non-debugger binary (T1546.012)", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Detect a new SSH authorized_keys entry written to a user's home directory on a Linux server outside of a scheduled provisioning window", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Alert on cron job files created or modified under /etc/cron.d/, /etc/cron.daily/, or /var/spool/cron/ by a non-root process", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Detect modifications to /etc/passwd or /etc/shadow files by any process other than useradd, usermod, or passwd", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Alert on a new systemd service unit file created in /etc/systemd/system/ or /usr/lib/systemd/system/ by a non-package-manager process", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Detect kernel module loaded via insmod or modprobe that is not signed or not present in the approved module list (Linux rootkit staging)", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Alert on a browser extension installed outside of enterprise push policy (new extension directory created in Chrome or Firefox profile under AppData)", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Detect PowerShell profile modification: writes to the PowerShell profile path by a non-administrative user", "category": "persistence", "complexity": "medium"},
+    {"nl_query": "Alert on modifications to the LSA Security Packages or Authentication Packages registry values (T1547.002 custom SSP/AP for credential harvesting)", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Detect new print monitor DLL registered in HKLM\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors (T1547.010)", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Alert on a COM object hijack: HKCU\\Software\\Classes\\CLSID entry created that shadows a HKLM CLSID used by a privileged process (T1546.015)", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Detect Active Directory GPO modification that adds a new logon script or immediate task to a GPO linked to a high-value OU", "category": "persistence", "complexity": "high"},
+    {"nl_query": "Alert on new accounts created in Active Directory outside of the approved identity-provisioning service account (event ID 4720 not originating from the provisioning server)", "category": "persistence", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PRIVILEGE ESCALATION  (20)  — ATT&CK: Privilege Escalation
+    # Covers: Windows UAC bypass, token impersonation, sudo abuse, AD delegation
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Alert when a user account is added to the Domain Admins group (event ID 4728, group SID ending -512)", "category": "privilege", "complexity": "low"},
+    {"nl_query": "Detect a standard user account being added to the local Administrators group on a workstation (event ID 4732)", "category": "privilege", "complexity": "low"},
+    {"nl_query": "Alert on token impersonation: a process calling ImpersonateLoggedOnUser or DuplicateTokenEx for a token belonging to a higher-privileged account (Sysmon event 8 access rights 0x0200)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect UAC bypass via fodhelper.exe: process creating HKCU\\Software\\Classes\\ms-settings\\shell\\open\\command registry key followed by fodhelper.exe launching a child process", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Alert on named-pipe impersonation: a service process creating a named pipe that is subsequently connected to by a high-privileged client (T1134.001)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect PrintSpoofer or similar SeImpersonatePrivilege abuse: spoolsv.exe spawning an unexpected child process not in baseline (T1134)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Alert on Kerberos delegation abuse: account with unconstrained delegation (TrustedForDelegation = True) receiving a TGT for a Domain Admin (T1558)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect sudo privilege escalation on Linux: audit log showing a non-standard user running sudo to execute /bin/bash or /bin/sh (sudoers abuse)", "category": "privilege", "complexity": "medium"},
+    {"nl_query": "Alert on SUID binary abuse: execution of a file with the SUID bit set from a non-standard path (not /usr/bin or /bin) by a non-root user", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect container escape via privileged pod: a process inside a container reading /proc/1/cgroup where the cgroup is not a container namespace (host PID namespace escape)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Alert on AWS IAM privilege escalation: AttachUserPolicy or AttachRolePolicy call adding AdministratorAccess or PowerUserAccess managed policy to an existing principal", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect Azure role assignment: new Owner or User Access Administrator role granted at subscription scope outside of Privileged Identity Management workflow (Azure Activity Log)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Alert on SID history injection: an account's SIDHistory attribute modified to include a Domain Admins SID (event ID 4765 or 4766)", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect DCSync attack: a non-domain-controller account performing DS-Replication-Get-Changes-All (event ID 4662 with access mask 0x100) to replicate AD secrets", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Alert on Windows access token manipulation: a process calling AdjustTokenPrivileges to enable SeDebugPrivilege outside of known administrative tools", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect pass-the-hash: event ID 4624 logon type 3 with NTLM authentication and NTLMv1 or NTLMv2 from a source that has not previously used NTLM for network logon", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Alert on new AdminSDHolder modifications: ACE added to the AdminSDHolder container in Active Directory granting a non-privileged account WriteDACL or GenericAll", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect group policy preference files containing cpassword (MS14-025 lingering GPP password): GPO XML files with a cpassword attribute in SYSVOL", "category": "privilege", "complexity": "medium"},
+    {"nl_query": "Alert on a user adding themselves to a privileged group via LDAP modify operation on their own account object without going through approved IAM workflow", "category": "privilege", "complexity": "high"},
+    {"nl_query": "Detect exploit of vulnerable kernel module: unexpected privilege change (UID transition to 0) recorded in Linux auditd after execution of an unrecognised binary", "category": "privilege", "complexity": "high"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # DISCOVERY  (20)  — ATT&CK: Discovery
+    # Covers: AD enumeration, network discovery, cloud resource enumeration
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect Active Directory enumeration via net group, net user, or net localgroup commands executed by a non-administrative user on a domain-joined host", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Alert on BloodHound or SharpHound collection: LDAP queries requesting all user, computer, and group objects with SPN attributes from a single workstation in under 60 seconds", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Detect nltest.exe /dclist or nltest.exe /domain_trusts executed by a non-privileged user (domain trust enumeration)", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Alert on PowerView or similar recon: PowerShell commands containing Get-DomainUser, Get-DomainComputer, or Get-DomainTrust within a single session", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Detect host and service discovery on Linux: rapid execution of nmap, masscan, or arp-scan by a non-root user account", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Alert on whoami, hostname, ipconfig, or systeminfo commands executed in sequence within 60 seconds by the same process tree (post-exploitation system survey)", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Detect AWS resource enumeration: IAM principal calling DescribeInstances, ListBuckets, ListRoles, and DescribeSecurityGroups in sequence within 5 minutes (CloudTrail)", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Alert on AWS GetCallerIdentity called from an access key that has never previously used the AWS CLI (possible stolen key first use)", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Detect Azure subscription enumeration: service principal calling GET on subscriptions, resourceGroups, and resources in sequence within 2 minutes (Azure Activity Log)", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Alert on Kubernetes API server audit log showing LIST or GET on secrets, configmaps, or serviceaccounts by a user outside the kube-system namespace", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Detect registry enumeration: reg.exe query or regedit.exe accessing HKLM\\SAM or HKLM\\SECURITY hives by a non-SYSTEM process", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Alert on file system discovery: process enumerating more than 500 files under C:\\Users or /home within 30 seconds (automated credential or document harvesting)", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Detect network share enumeration: net view or Get-SmbShare executed from a workstation connecting to more than 5 different hosts within 5 minutes", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Alert on security tool discovery: process executing tasklist, sc query, or Get-Service filtering for known AV or EDR product names (T1518.001)", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Detect cloud storage enumeration: S3 ListObjects or ListObjectsV2 API calls across more than 10 different buckets within 5 minutes from a single IAM identity", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Alert on a workstation running arp -a, route print, and netstat -an in sequence within 120 seconds (network topology discovery)", "category": "discovery", "complexity": "low"},
+    {"nl_query": "Detect Local Security Authority secrets query: reg save HKLM\\SECURITY or reg save HKLM\\SAM commands executed by a non-SYSTEM process", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Alert on DNS zone transfer (AXFR) request from a non-authoritative server or non-approved monitoring host to an internal DNS server", "category": "discovery", "complexity": "medium"},
+    {"nl_query": "Detect Active Directory Certificate Services enumeration: certutil -CA or certutil -config executed by a non-administrator, or LDAP queries for pKIEnrollmentService objects", "category": "discovery", "complexity": "high"},
+    {"nl_query": "Alert on process executing Get-GPO, Get-GPOReport, or gpresult /R targeting another user or computer (GPO enumeration for lateral movement planning)", "category": "discovery", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # CREDENTIAL ACCESS  (20)  — ATT&CK: Credential Access
+    # Covers: dumping, keylogging, password files, cloud secrets
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect Mimikatz execution: process command line containing sekurlsa::logonpasswords, lsadump::sam, or lsadump::dcsync", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on LSASS dump via comsvcs.dll: rundll32.exe executing MiniDump with lsass as the target process (T1003.001)", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect SAM database access: attempts to read HKLM\\SAM\\SAM\\Domains\\Account\\Users by a non-SYSTEM, non-approved backup process", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on ntds.dit file access outside of backup windows: file open handle on ntds.dit or a VSS shadow copy of NTDS on a domain controller", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect DPAPI secret decryption: CryptUnprotectData called with the CRYPTPROTECT_LOCAL_MACHINE flag by a process in a non-administrative session (browser credential theft)", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on keylogger indicators: process installing a SetWindowsHookEx WH_KEYBOARD_LL hook pointing to a DLL not present in baseline (T1056.001)", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect credential file access: reads to Chrome, Firefox, or Edge login data files (Login Data, logins.json, key4.db) by a process other than the browser itself", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on AWS Secrets Manager secret values retrieved by an IAM principal that has never previously accessed secrets, especially GetSecretValue on production secrets", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect Azure Key Vault secret retrieval: service principal calling SecretGet on more than 10 distinct secrets within 5 minutes outside of normal deployment windows", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on HashiCorp Vault secrets engine bulk read: more than 50 kv/data reads by a single token within 2 minutes (possible automated credential harvesting)", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect password manager process memory scraping: uncommon process opening a handle to 1Password, Bitwarden, or KeePass processes with VM_READ access", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on Kerberoasting: more than 10 TGS-REQ requests for service accounts with RC4 encryption type from the same host within 5 minutes (event ID 4769)", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect /etc/shadow file read on Linux by a process other than passwd, chage, or login (shadow file credential access)", "category": "credential_access", "complexity": "medium"},
+    {"nl_query": "Alert on cloud metadata service access from inside an EC2 instance or Azure VM by a process that is not the hypervisor agent or cloud-init (SSRF to IMDS T1552.005)", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Detect LaZagne or credential scanning tool execution: process name or command line matching laZagne, credentialfileview, or netpass", "category": "credential_access", "complexity": "medium"},
+    {"nl_query": "Alert on SSH private key file reads from the user ssh directory or /etc/ssh by a process other than sshd or ssh", "category": "credential_access", "complexity": "medium"},
+    {"nl_query": "Detect GCP service account key file exfiltration: serviceaccounts.keys.list or serviceaccounts.keys.get called from outside approved CI/CD service accounts", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on Windows Credential Manager enumeration: vaultcmd /list or cmdkey /list executed by a standard user, or direct access to the Vault directory", "category": "credential_access", "complexity": "medium"},
+    {"nl_query": "Detect pass-the-hash preparation: process reading the NTDS.dit file via volume shadow copy followed by ntdsutil or esentutl snapshot copy", "category": "credential_access", "complexity": "high"},
+    {"nl_query": "Alert on plaintext credentials in environment variables: process with environment variables matching SECRET, PASSWORD, TOKEN, or API_KEY written to a log file or child process", "category": "credential_access", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # LATERAL MOVEMENT  (20)  — ATT&CK: Lateral Movement
+    # Covers: PsExec, RDP, WMI, SSH tunnelling, AD abuse, token relay
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect PsExec-style lateral movement: ADMIN$ share mount followed by creation of a PSEXESVC service (event ID 7045) on the target host within 60 seconds", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on WMI remote process creation: WMI consumer spawning cmd.exe or powershell.exe with an encoded payload on a target host (T1021.006)", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect RDP session initiated by a user from a workstation to a server the user has never accessed in the last 30 days (anomalous lateral RDP)", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on remote service creation via SC: sc.exe targeting a remote host executed from a workstation", "category": "lateral_movement", "complexity": "medium"},
+    {"nl_query": "Detect scheduled task created on a remote host via schtasks /create /s targeting an internal host from an anomalous source workstation", "category": "lateral_movement", "complexity": "medium"},
+    {"nl_query": "Alert on Impacket or similar Python framework usage: SMB session with no prior net use establishing a share and dropping an executable within 5 minutes (SMBEXEC pattern)", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect SSH tunnelling or port forwarding: ssh process launched with -L, -R, or -D flags forwarding a local or dynamic port to an internal target from a bastion host", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on RPC-based lateral movement: process opening MS-SCMR Service Control Manager Remote Protocol pipe on more than 3 internal hosts within 10 minutes", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect Golden Ticket attack: event ID 4769 for a service ticket where the ticket encryption type is RC4 and the account is a krbtgt-derived SPN", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on Silver Ticket attack: Kerberos service ticket presented for a service on a host where no corresponding TGT exchange was observed in the preceding 10 hours (T1558.002)", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect NTLM relay attack setup: LLMNR or NBT-NS poisoning indicators with UDP port 5355 or 137 traffic from an internal workstation that is not a DNS server", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on credential relay via PrinterBug SpoolSample: RPC call to MS-RPRN spoolss pipe triggering authentication from a domain controller to an attacker host", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect overpass-the-hash: NTLM authentication on network logon (event 4624 type 3) immediately followed by a Kerberos TGT request from the same source (ticket minting from NTLM hash)", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on excessive IPC$ connections: single source host mounting IPC$ on more than 10 different internal targets within 5 minutes", "category": "lateral_movement", "complexity": "medium"},
+    {"nl_query": "Detect DCOM lateral movement: mmc.exe or ShellBrowserWindow COM object invocation from a remote IP in event ID 4624 logon type 3 (T1021.003)", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on Azure VM RunCommand or Invoke-AzVMRunCommand called against a production VM by a principal outside the approved automation account", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect AWS Systems Manager Run Document execution targeting EC2 instances by an IAM principal that has not previously used SSM Run Command", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on container-to-container lateral movement: a pod communicating with another pod in a different namespace on a port not declared in NetworkPolicy", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Detect Active Directory Certificate Services ESC1 abuse: certificate enrollment request where the SAN includes a Domain Admin UPN submitted by a non-administrative account", "category": "lateral_movement", "complexity": "high"},
+    {"nl_query": "Alert on Mimikatz sekurlsa::pth generating a new logon session (event ID 4624 logon type 9 NewCredentials) without a corresponding interactive logon", "category": "lateral_movement", "complexity": "high"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # EXFILTRATION  (15)  — ATT&CK: Exfiltration
+    # Covers: email, cloud upload, FTP, DNS, USB, staging
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Alert on a user sending more than 50 external emails within one hour when their 30-day baseline is fewer than 10 per hour", "category": "exfiltration", "complexity": "medium"},
+    {"nl_query": "Detect email attachment exfiltration: a user forwarding emails with attachments larger than 5 MB to a personal Gmail, Yahoo, or Hotmail address", "category": "exfiltration", "complexity": "medium"},
+    {"nl_query": "Alert on an inbox forwarding rule created to an external address via Exchange admin audit log or Microsoft 365 Unified Audit Log", "category": "exfiltration", "complexity": "medium"},
+    {"nl_query": "Detect large uploads to personal cloud storage: DNS resolution of dropbox.com, drive.google.com, or wetransfer.com followed by more than 50 MB of HTTPS upload traffic", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Alert on FTP or SFTP session from a workstation to an external IP transferring more than 20 MB within one session", "category": "exfiltration", "complexity": "low"},
+    {"nl_query": "Detect data staged in an unusual location: more than 500 files copied to a user's TEMP directory within 10 minutes before a large archive being created", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Alert on DNS exfiltration: more than 200 DNS queries per minute with subdomains longer than 40 characters from a single internal host to an external resolver", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Detect exfiltration via ICMP: outbound ICMP packets with a payload larger than 1400 bytes at a rate exceeding 10 per second from a workstation", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Alert on S3 data exfiltration: GetObject calls on a bucket not accessed in the last 90 days followed by more than 1 GB of data transferred out within an hour", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Detect Azure Blob Storage bulk download: more than 100 GetBlob operations on a container within 10 minutes from an IP outside corporate IP ranges", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Alert on archive creation immediately preceding USB insertion: 7z.exe, winrar.exe, or zip spawned within 5 minutes of a new removable storage device appearing in Windows event 6416", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Detect sensitive file exfiltration via Teams or Slack: DLP alert for files tagged as Confidential shared externally via collaboration platform webhook", "category": "exfiltration", "complexity": "medium"},
+    {"nl_query": "Alert on print spooler job sent for a document tagged as sensitive exceeding 50 pages outside business hours", "category": "exfiltration", "complexity": "medium"},
+    {"nl_query": "Detect a user accessing and downloading more than 1000 files from SharePoint Online within a single 30-minute session (Microsoft 365 audit log FileDownloaded event)", "category": "exfiltration", "complexity": "high"},
+    {"nl_query": "Alert on data transferred to a SaaS application not on the corporate approved application list exceeding 10 MB (Shadow IT upload)", "category": "exfiltration", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # IMPACT  (15)  — ATT&CK: Impact
+    # Covers: ransomware, wiper, DoS, resource hijacking, data destruction
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect ransomware activity: more than 100 file rename operations to an unknown extension by the same process within 60 seconds", "category": "impact", "complexity": "high"},
+    {"nl_query": "Alert on mass file deletion: more than 200 files deleted by a single process within 30 seconds, not matching known backup or cleanup software", "category": "impact", "complexity": "high"},
+    {"nl_query": "Detect shadow copy deletion: vssadmin delete shadows, wmic shadowcopy delete, or bcdedit /set recoveryenabled no executed by any process (ransomware pre-encryption step)", "category": "impact", "complexity": "medium"},
+    {"nl_query": "Alert on MBR overwrite attempt: process with low-level disk write access to PhysicalDrive0 with GENERIC_WRITE outside of known disk management tools", "category": "impact", "complexity": "high"},
+    {"nl_query": "Detect resource hijacking: sudden CPU spike above 90% on an EC2 or Azure VM combined with new outbound connections to mining pool domains on ports 3333, 4444, or 14444", "category": "impact", "complexity": "high"},
+    {"nl_query": "Alert on Windows event log clearing: event ID 1102 (Security log cleared) or 104 (System log cleared) on any host, especially a domain controller", "category": "impact", "complexity": "low"},
+    {"nl_query": "Detect denial of service staging: a single internal host sending more than 100000 UDP packets per minute to a single external target (UDP flood preparation)", "category": "impact", "complexity": "medium"},
+    {"nl_query": "Alert on logical disk format command: format.exe executed on a volume containing live data outside of a known provisioning or decommission job", "category": "impact", "complexity": "high"},
+    {"nl_query": "Detect bcdedit changes disabling safe-mode recovery or changing boot policy to ignore integrity checks outside of approved patch windows", "category": "impact", "complexity": "medium"},
+    {"nl_query": "Alert on an EC2 instance termination API call (TerminateInstances) targeting more than 5 production instances within 5 minutes by a single IAM principal", "category": "impact", "complexity": "high"},
+    {"nl_query": "Detect database wiper activity: DROP TABLE or TRUNCATE statements issued to more than 5 tables within 60 seconds by an application account outside a deployment window", "category": "impact", "complexity": "high"},
+    {"nl_query": "Alert on Kubernetes namespace deletion or large-scale pod termination (more than 10 pods deleted) by a service account outside the cluster lifecycle management workflow", "category": "impact", "complexity": "high"},
+    {"nl_query": "Detect email bombing: a mailbox receiving more than 500 emails within 10 minutes (email flood used to bury notification emails during account takeover)", "category": "impact", "complexity": "medium"},
+    {"nl_query": "Alert on Azure resource group deletion by a principal whose previous activity in the same session shows reconnaissance and lateral movement", "category": "impact", "complexity": "high"},
+    {"nl_query": "Detect firmware update command issued to a network device from an IP not belonging to the network management system (SNMP set or out-of-band management)", "category": "impact", "complexity": "high"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # CLOUD  (20)  — ATT&CK: Initial Access · Persistence · Privilege Escalation
+    # Covers: AWS, Azure, GCP — IAM, storage, logging, compute, networking
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect AWS IAM access key created for a root account (CloudTrail CreateAccessKey where userIdentity.type is Root)", "category": "cloud", "complexity": "low"},
+    {"nl_query": "Alert on an S3 bucket ACL change that grants public READ or READ_ACP permission to AllUsers or AuthenticatedUsers (CloudTrail PutBucketAcl)", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect CloudTrail logging disabled: StopLogging, DeleteTrail, or UpdateTrail with IncludeGlobalServiceEvents set to false by any principal", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on IAM policy attached to an IAM user directly (not via group or role) granting actions containing wildcard on resource wildcard (overly permissive inline policy)", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect a new EC2 security group rule opening port 22 or 3389 to 0.0.0.0/0 (unrestricted SSH or RDP inbound)", "category": "cloud", "complexity": "low"},
+    {"nl_query": "Alert on AWS Lambda function code updated to include a new IAM role assumption or exfiltration-capable SDK call outside of approved CI/CD pipeline events", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect AWS GuardDuty finding severity HIGH or CRITICAL that has not been remediated or acknowledged within 4 hours of creation", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on an IAM role trust policy modification that adds a new external AWS account ID as a trusted principal (cross-account trust abuse)", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect Azure diagnostic settings deleted or modified to exclude a category of resource log from the Log Analytics workspace", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on Azure Entra ID application granted application permissions to Microsoft Graph mail.readwrite or files.readwrite.all outside of approved service principal lifecycle", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect GCP service account key created with a validity longer than 90 days outside of the approved rotation process (IAM CreateServiceAccountKey)", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on AWS Systems Manager Parameter Store GetParameters call retrieving SecureString parameters by an IAM entity not in the approved decryption list", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect mass deletion of AWS CloudWatch alarms: DeleteAlarms API call removing more than 5 alarms within 5 minutes (defense evasion)", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on a new VPC peering connection accepted between the production VPC and an unrecognised AWS account VPC", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect AWS ECS task definition update injecting a new container image from an unapproved registry (not the corporate ECR private registry)", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Alert on GCP organisation policy constraint updated to allow a previously restricted service or resource type without change-management approval", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect Azure Automation runbook created or modified by a user who does not hold the Automation Contributor role (possible role creep or account compromise)", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on AWS IAM AssumeRole cross-account call from an account ID not in the approved-vendor list, especially for roles with Administrator-level permissions", "category": "cloud", "complexity": "high"},
+    {"nl_query": "Detect Azure Policy assignment removed for a compliance policy such as a CIS benchmark or NIST 800-53 initiative in a production subscription", "category": "cloud", "complexity": "medium"},
+    {"nl_query": "Alert on a new public IP address or NAT Gateway created in a production VPC or VNet without a corresponding approved change-management reference tag", "category": "cloud", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # CONTAINER / KUBERNETES  (15)  — ATT&CK: Execution · Privilege Escalation
+    # Covers: Kubernetes API, Docker daemon, runtime escapes, supply chain
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Alert on a container running in privileged mode (securityContext.privileged: true) in a production Kubernetes namespace", "category": "container", "complexity": "medium"},
+    {"nl_query": "Detect kubectl exec or kubectl cp into a production pod from a source IP not in the approved operations CIDR range (Kubernetes API audit log)", "category": "container", "complexity": "high"},
+    {"nl_query": "Alert on a new ClusterRoleBinding granting cluster-admin to a ServiceAccount or user outside the kube-system or approved IAM namespace", "category": "container", "complexity": "high"},
+    {"nl_query": "Detect container image pulled from an unapproved registry (not the corporate ECR or internal Harbor) in any production or staging namespace", "category": "container", "complexity": "medium"},
+    {"nl_query": "Alert on a pod spec mounting the Docker socket (/var/run/docker.sock) as a volume, enabling container escape to the host", "category": "container", "complexity": "high"},
+    {"nl_query": "Detect a process inside a container reading /proc/1/environ or /proc/1/cmdline on the host (host PID namespace escape indicator)", "category": "container", "complexity": "high"},
+    {"nl_query": "Alert on Kubernetes secret accessed directly via API by a ServiceAccount that has not previously read secrets in that namespace (K8s audit log get or list on secrets)", "category": "container", "complexity": "high"},
+    {"nl_query": "Detect a new pod created in the kube-system namespace by a non-administrative service account or human user (privileged namespace tampering)", "category": "container", "complexity": "high"},
+    {"nl_query": "Alert on a Kubernetes CronJob or Job spawning a process that makes outbound network connections to a domain not in the egress NetworkPolicy allowlist", "category": "container", "complexity": "high"},
+    {"nl_query": "Detect Docker daemon API exposed on TCP: any remote call to containers list or containers create from an IP outside the management network", "category": "container", "complexity": "high"},
+    {"nl_query": "Alert on a container process writing to /etc/cron.d/, /etc/cron.daily/, or /etc/profile.d/ (persistence mechanisms not valid inside a stateless container)", "category": "container", "complexity": "high"},
+    {"nl_query": "Detect high-privilege Linux capabilities (SYS_ADMIN, SYS_PTRACE, NET_ADMIN) granted to a container not on the approved security-policy exception list", "category": "container", "complexity": "medium"},
+    {"nl_query": "Alert on a Kubernetes admission controller policy override annotation added to a workload manifest to bypass PodSecurityAdmission or OPA Gatekeeper", "category": "container", "complexity": "high"},
+    {"nl_query": "Detect lateral movement between pods: a process inside a pod making direct TCP connections to another pod's internal ClusterIP on a port not declared in any Service definition", "category": "container", "complexity": "high"},
+    {"nl_query": "Alert on a runtime security tool such as Falco or Sysdig generating a CRITICAL severity event for any container in the production cluster that has not been acknowledged within 30 minutes", "category": "container", "complexity": "medium"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # WEB  (15)  — ATT&CK: Initial Access · Collection · Exploitation
+    # Covers: injection, auth bypass, API abuse, WAF evasion, SSRF, XXE
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Detect SQL injection attempts: HTTP requests containing UNION SELECT, OR 1=1, or SQL comment sequences in query parameters or POST body", "category": "web", "complexity": "medium"},
+    {"nl_query": "Alert on cross-site scripting (XSS) probe: HTTP request containing script tags, javascript:, or onerror= in any parameter, header, or body field", "category": "web", "complexity": "medium"},
+    {"nl_query": "Detect path traversal: HTTP request URL containing ../ or URL-encoded equivalents attempting to access files outside the web root", "category": "web", "complexity": "medium"},
+    {"nl_query": "Alert on Server-Side Request Forgery (SSRF) probe: web application making an outbound HTTP request to the cloud metadata service at 169.254.169.254 triggered by user-supplied URL input", "category": "web", "complexity": "high"},
+    {"nl_query": "Detect XXE injection: HTTP POST body containing a DOCTYPE declaration with an ENTITY reference to a file:// or http:// URI in XML input to an API endpoint", "category": "web", "complexity": "high"},
+    {"nl_query": "Alert on authentication endpoint brute-force: more than 100 POST requests to /login, /signin, or /auth within 5 minutes from a single IP with different credential pairs", "category": "web", "complexity": "medium"},
+    {"nl_query": "Detect web application credential stuffing: login endpoint returning HTTP 200 after receiving credentials matching a known breach data set", "category": "web", "complexity": "high"},
+    {"nl_query": "Alert on API key abuse: same API key generating more than 5000 requests per hour, exceeding the normal per-key rate limit by 10x", "category": "web", "complexity": "low"},
+    {"nl_query": "Detect insecure direct object reference (IDOR) exploitation: a user receiving more than 20 HTTP 200 responses on sequential object IDs not owned by the requesting user", "category": "web", "complexity": "high"},
+    {"nl_query": "Alert on command injection in web parameters: HTTP request containing shell metacharacters such as semicolons, pipes, or subshell expansion in fields processed by OS command execution functions", "category": "web", "complexity": "high"},
+    {"nl_query": "Detect WAF bypass attempts: HTTP requests with unusual encoding (double URL encoding, UTF-8 overlong encoding, null-byte injection) triggering WAF bypass signatures", "category": "web", "complexity": "high"},
+    {"nl_query": "Alert on web scanner activity: HTTP requests from a single IP containing more than 50 distinct URL paths with 404 responses within 5 minutes (vulnerability scanner or fuzzer)", "category": "web", "complexity": "medium"},
+    {"nl_query": "Detect JWT token forgery: web application receiving a JWT with algorithm set to none or HS256 when RS256 is the configured standard (algorithm confusion attack)", "category": "web", "complexity": "high"},
+    {"nl_query": "Alert on admin panel access from an IP outside the corporate IP range: HTTP 200 response to /admin, /wp-admin, or /phpmyadmin from an unapproved source IP", "category": "web", "complexity": "medium"},
+    {"nl_query": "Detect GraphQL introspection query sent to a production API from an IP not in the developer allow-list (information disclosure risk)", "category": "web", "complexity": "low"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # EMAIL  (15)  — ATT&CK: Initial Access · Collection · Exfiltration
+    # Covers: phishing, BEC, mail rules, spoofing, OAuth consent, DLP
+    # ══════════════════════════════════════════════════════════════════════════
+
+    {"nl_query": "Alert on creation of an Exchange or Microsoft 365 inbox forwarding rule redirecting all incoming mail to an external address (Unified Audit Log New-InboxRule with ForwardTo external)", "category": "email", "complexity": "medium"},
+    {"nl_query": "Detect email spoofing: inbound email where the From header domain matches the organisation's domain but SPF, DKIM, and DMARC all fail", "category": "email", "complexity": "medium"},
+    {"nl_query": "Alert on Business Email Compromise indicator: an email thread with an executive's display name but a From address in a lookalike domain (homoglyph or hyphenated variant)", "category": "email", "complexity": "high"},
+    {"nl_query": "Detect mass phishing campaign: a single sender or IP delivering more than 200 emails containing the same URL or attachment hash to internal recipients within 15 minutes", "category": "email", "complexity": "high"},
+    {"nl_query": "Alert when a user clicks a URL in an email that resolves to a domain categorised as phishing, malware, or newly registered in the last 7 days (email click-tracking or proxy log)", "category": "email", "complexity": "medium"},
+    {"nl_query": "Detect malicious attachment detonation: email attachment with a .docm, .xlsm, .js, .vbs, .hta, or .iso extension delivered to more than 5 internal recipients in a 10-minute window", "category": "email", "complexity": "high"},
+    {"nl_query": "Alert on email account compromise: user account sending more than 500 outbound emails within one hour when the 30-day baseline is below 100 per hour", "category": "email", "complexity": "high"},
+    {"nl_query": "Detect OAuth application consent granted by a user to a third-party app requesting mail.readwrite, calendars.readwrite, or contacts.read permissions in Microsoft 365", "category": "email", "complexity": "high"},
+    {"nl_query": "Alert on a Microsoft 365 transport rule created that forwards a copy of all mail matching a keyword to an external address (BEC persistence via mail flow rule)", "category": "email", "complexity": "high"},
+    {"nl_query": "Detect a dormant email account (no activity in 60 days) suddenly sending emails with external attachments (possible compromised account re-activation)", "category": "email", "complexity": "medium"},
+    {"nl_query": "Alert on email impersonation of an executive: inbound email with ReplyTo address different from the From address and subject containing urgency keywords such as Wire Transfer, Urgent, or Payment", "category": "email", "complexity": "medium"},
+    {"nl_query": "Detect email data loss: outbound email to a personal email domain with an attachment matching the DLP sensitive-data policy for PII or financial data", "category": "email", "complexity": "high"},
+    {"nl_query": "Alert on email account sign-in from a location inconsistent with the user's recent activity, followed by creation of an inbox rule within 5 minutes (account takeover pattern)", "category": "email", "complexity": "high"},
+    {"nl_query": "Detect QR code phishing (quishing): inbound email with no body text but an embedded image and no text links, bypassing URL filters", "category": "email", "complexity": "medium"},
+    {"nl_query": "Alert on a shared mailbox accessed by a user who is not a member of the approved shared-mailbox access group and who reads more than 50 messages in one session", "category": "email", "complexity": "medium"},
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Exceptions
@@ -423,13 +789,27 @@ class ProcessResult:
 
 
 def _process_one(seed: dict, min_valid: int) -> ProcessResult:
+    from src.llm.client import LLMClient
     from src.agents.parser_agent import ParserAgent
 
     nl_query = seed["nl_query"]
     t0 = time.monotonic()
 
     try:
-        ir = ParserAgent().parse(nl_query)
+        client = LLMClient()
+
+        parser = ParserAgent(
+            client=client
+        )
+
+        ir_result = parser.parse(nl_query)
+
+        ir = (
+            ir_result.ir
+            if hasattr(ir_result, "ir")
+            else ir_result
+        )
+
     except Exception as exc:
         log.warning("Parser failed", extra={"query": nl_query[:60], "error": str(exc)})
         return ProcessResult(None, "parse_failed", round((time.monotonic() - t0) * 1000, 2), 0.0)
@@ -592,7 +972,7 @@ def _write_dataset_card(path: Path, stats: dict, splits: dict[str, list[dict]]) 
         "|---|---|---|",
     ]
     for name, recs in splits.items():
-        n_groups = len({r["_internal"]["source_seed_id"] for r in recs})
+        n_groups = len({r["metadata"]["source_seed_id"] for r in recs})
         lines.append(f"| {name} | {len(recs)} | {n_groups} |")
 
     lines += [

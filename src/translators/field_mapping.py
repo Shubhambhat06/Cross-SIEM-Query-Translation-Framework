@@ -255,6 +255,7 @@ FIELD_MAP: dict[str, dict[str, str]] = {
         "sentinel": "SubjectDomainName",
         "wazuh":    "domain",
     },
+    
     "country": {
         "splunk":   "country",
         "qradar":   "geographic",

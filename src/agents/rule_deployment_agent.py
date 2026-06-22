@@ -14,18 +14,12 @@ class RuleDeploymentAgent:
 
     def __init__(
         self,
-        rules_file: str = "generated_rules/local_rules.xml"
+        rules_file: str = "/var/ossec/etc/rules/local_rules.xml"
     ):
         self.rules_file = Path(rules_file)
-        self.rules_file.parent.mkdir(
-            parents=True,
-            exist_ok=True
-        )
+        
 
-        if not self.rules_file.exists():
-            self.rules_file.write_text(
-                "<group name=\"generated_rules\">\n</group>\n"
-            )
+        
 
     def deploy(
         self,
@@ -34,20 +28,51 @@ class RuleDeploymentAgent:
 
         try:
 
-            content = self.rules_file.read_text()
+            content = subprocess.check_output(
+                    [
+                        "sudo",
+                        "cat",
+                        str(self.rules_file)
+                    ],
+                    text=True
+                )
 
             if "</group>" not in content:
                 raise ValueError(
                     "local_rules.xml malformed"
                 )
 
-            content = content.replace(
-                "</group>",
-                f"{rule_xml}\n</group>"
+            last_group = content.rfind("</group>")
+
+            if last_group == -1:
+                raise ValueError(
+                    "No closing </group> found"
+                )
+
+            content = (
+                content[:last_group]
+                + "\n"
+                + rule_xml
+                + "\n"
+                + content[last_group:]
             )
 
-            self.rules_file.write_text(
+            temp_file = Path(
+                "/tmp/nlsiem_rules.xml"
+            )
+
+            temp_file.write_text(
                 content
+            )
+
+            subprocess.run(
+                [
+                    "sudo",
+                    "cp",
+                    str(temp_file),
+                    str(self.rules_file)
+                ],
+                check=True
             )
 
             subprocess.run(

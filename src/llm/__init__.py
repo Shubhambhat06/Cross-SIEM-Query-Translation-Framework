@@ -34,14 +34,14 @@ Quickstart
 
     # Token tracking
     from src.llm import TokenCounter
-    counter = TokenCounter(model="llama-3.3-70b-versatile")
+    counter = TokenCounter(model="qwen/qwen3-32b")
     print(counter.estimate("some text"))
     print(counter.supports_tools)   # True
 
 Provider notes
 --------------
   groq       Fast cloud inference. Free tier: 30 req/min, 14,400 tokens/min.
-             Best models: llama-3.3-70b-versatile, deepseek-r1-distill-llama-70b
+             Best models: qwen/qwen3-32b, deepseek-r1-distill-llama-70b
              Set GROQ_API_KEY in your environment.
 
   gemini     Google AI Studio free tier. 15 req/min, 1M tokens/min (Flash).
@@ -143,7 +143,7 @@ def auto_client(**kwargs) -> LLMClient:
 
 
 def groq_client(
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "qwen/qwen3-32b",
     *,
     api_key:     str | None = None,
     temperature: float      = 0.0,
@@ -153,9 +153,9 @@ def groq_client(
     Create a Groq client with sensible defaults.
 
     Best free models on Groq:
-      - llama-3.3-70b-versatile     (128k ctx, tool use, JSON mode) ← default
+      - qwen/qwen3-32b     (128k ctx, tool use, JSON mode) ← default
       - deepseek-r1-distill-llama-70b (128k ctx, strong reasoning)
-      - llama-3.1-8b-instant         (131k ctx, fastest)
+      - qwen/qwen3-32b         (131k ctx, fastest)
       - qwen-qwq-32b                 (131k ctx, excellent reasoning)
 
     Requires GROQ_API_KEY in environment.

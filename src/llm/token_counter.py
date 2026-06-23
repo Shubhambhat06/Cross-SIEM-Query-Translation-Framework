@@ -60,9 +60,9 @@ class ModelSpec:
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     # ── Groq (free tier, fast inference) ──────────────────────────────────
-    "llama-3.3-70b-versatile":       ModelSpec(128_000, supports_tools=True, supports_json_mode=True),
+    "qwen/qwen3-32b":       ModelSpec(128_000, supports_tools=True, supports_json_mode=True),
     "llama-3.1-70b-versatile":       ModelSpec(131_072, supports_tools=True, supports_json_mode=True),
-    "llama-3.1-8b-instant":          ModelSpec(131_072, supports_tools=True, supports_json_mode=True),
+    "qwen/qwen3-32b":          ModelSpec(131_072, supports_tools=True, supports_json_mode=True),
     "llama3-70b-8192":               ModelSpec(8_192,   supports_json_mode=True),
     "llama3-8b-8192":                ModelSpec(8_192,   supports_json_mode=True),
     "mixtral-8x7b-32768":            ModelSpec(32_768,  supports_json_mode=True),

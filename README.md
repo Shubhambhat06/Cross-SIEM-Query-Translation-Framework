@@ -2,9 +2,7 @@
 
 <h1>NL-SIEM</h1>
 
-<h3>Cross-Platform Detection Engineering and Execution Validation
-via Large Language Models, Intermediate Representation,
-and Multi-SIEM Connectors</h3>
+<h3>ATT&CK Coverage Drift: Cross-Platform Detection Engineering and Execution Validation<br/>via Large Language Models, Intermediate Representation, and Multi-SIEM Connectors</h3>
 
 <p>
   <a href="https://arxiv.org/abs/XXXX.XXXXX">
@@ -32,13 +30,46 @@ and Multi-SIEM Connectors</h3>
 
 ---
 
-## Overview
+## The Problem: Your Heatmap Is Green, But Your Detection Doesn't Fire
 
-Security Operations Center (SOC) analysts working across heterogeneous SIEM environments face a fundamental interoperability problem: each platform enforces its own incompatible query language, requiring every detection rule to be manually rewritten per platform. This process is slow, error-prone, and demands deep per-platform expertise that most teams lack.
+ATT&CK has become the de facto framework for measuring detection coverage. Security teams map detections to ATT&CK techniques, generate heatmaps, and use coverage metrics to communicate security posture to analysts, leadership, and incident responders. The assumption behind all of this is straightforward: if a technique is marked as covered, a corresponding detection capability exists.
 
-**NL-SIEM** is a multi-agent large language model framework that takes a natural language threat detection description as input and produces syntactically valid, semantically equivalent queries across five major SIEM platforms simultaneously. The core technical contribution is a **platform-agnostic Intermediate Representation (IR)** — a formally specified JSON schema that decouples natural language comprehension from platform-specific syntax generation. Combined with Retrieval-Augmented Generation (RAG) over curated SIEM documentation and structured few-shot chain-of-thought prompting, NL-SIEM achieves strong cross-platform translation fidelity without requiring manual query rewriting.
+In modern environments, that assumption breaks down.
 
-We also release **SIEMBench** — the first publicly available annotated benchmark dataset for cross-platform SIEM query translation, comprising 200+ expert-authored natural language to multi-platform query pairs stratified across six MITRE ATT&CK tactic categories.
+Most organizations operate multiple SIEM platforms simultaneously — a consequence of cloud adoption, mergers and acquisitions, regulatory requirements, and technology transitions. Detections engineered for one platform must be recreated, adapted, or translated across several others. As detections cross platform boundaries, differences in query semantics, aggregation behavior, field mappings, and temporal constraints silently degrade them. A translated detection may preserve its ATT&CK label while losing its behavioral meaning. The rule deploys successfully. The heatmap stays green. The detection no longer fires correctly.
+
+We call this **ATT&CK Coverage Drift**: the divergence between documented ATT&CK coverage and actual cross-platform detection capability.
+
+**NL-SIEM** is a multi-agent LLM framework that addresses coverage drift at its source. Rather than attaching ATT&CK metadata to detections after generation, NL-SIEM treats ATT&CK semantics as the structural foundation of the detection engineering process — embedded into a platform-agnostic Intermediate Representation that every downstream translator must preserve.
+
+---
+
+## How NL-SIEM Preserves ATT&CK Fidelity
+
+```
+Traditional Workflow:
+  Write detection in Splunk SPL (mapped to T1110.001)
+          ↓
+  Translate to QRadar AQL     →  ATT&CK label copied, semantics drift
+  Translate to Elastic EQL    →  ATT&CK label copied, semantics drift
+  Translate to Sentinel KQL   →  ATT&CK label copied, semantics drift
+  Translate to Wazuh XML      →  ATT&CK label copied, semantics drift
+
+                     Heatmap stays green. Coverage has decayed.
+
+NL-SIEM Workflow:
+  Analyst describes threat intent in natural language
+          ↓
+  ATT&CK Classifier resolves tactic, technique, sub-technique
+          ↓
+  Intermediate Representation encodes ATT&CK identity + detection semantics
+          ↓
+  Five platform translators inherit the same ATT&CK-bound contract
+          ↓
+  Syntactically valid, semantically equivalent, ATT&CK-faithful detections
+```
+
+ATT&CK fidelity is preserved because every detection inherits a common semantic definition — not because outputs are compared and corrected after generation.
 
 ---
 
@@ -48,7 +79,27 @@ We also release **SIEMBench** — the first publicly available annotated benchma
   <img src="siem_architecture.svg" alt="NL-SIEM Architecture" width="800"/>
 </div>
 
-> *Figure 1. End-to-end NL-SIEM pipeline: natural language input is parsed by the LLM agent into a platform-agnostic IR, which is then independently formatted by five SIEM-specific translators and passed through a multi-dimensional evaluation layer.*
+> *Figure 1. End-to-end NL-SIEM pipeline: natural language input is classified against the ATT&CK knowledge base, encoded into a platform-agnostic IR that embeds ATT&CK identity as a structural property, and then translated independently by five SIEM-specific agents — each bound to the same behavioral contract.*
+
+### Stage 1 — ATT&CK-Aware Threat Classification
+
+A dedicated ATT&CK Classifier Agent reasons over the ATT&CK knowledge base to resolve the most appropriate tactic, technique, and sub-technique from a natural-language description. Analysts provide no ATT&CK identifiers and no platform-specific details. The classifier establishes the canonical adversary behavior representation before any platform-dependent logic is introduced. This mapping becomes the semantic anchor for the rest of the pipeline.
+
+### Stage 2 — Intermediate Representation as a Semantic Contract
+
+Once ATT&CK context is established, the system encodes detection intent into a platform-independent Intermediate Representation. The IR captures:
+
+- ATT&CK tactic, technique, and sub-technique (embedded structurally, not as metadata)
+- Event categories and telemetry requirements
+- Detection predicates and filtering logic
+- Temporal constraints and aggregation functions
+- Threshold conditions and logical event relationships
+
+By separating behavioral intent from implementation syntax, the IR functions as a semantic contract that all downstream translators must honor.
+
+### Stage 3 — Cross-Platform Detection Translation
+
+Five independent translation agents — each supported by a RAG retrieval layer grounded in curated platform documentation — consume the same IR and generate platform-specific detection logic. Because all outputs originate from a shared ATT&CK-bound representation, cross-platform consistency is an architectural property, not a post-generation validation task.
 
 ---
 
@@ -56,45 +107,34 @@ We also release **SIEMBench** — the first publicly available annotated benchma
 
 | # | Contribution | Description |
 |---|---|---|
-| 1 | **NL-SIEM Pipeline** | End-to-end multi-agent architecture: NL → IR → 5 SIEM outputs via a clean abstraction boundary between comprehension and generation |
-| 2 | **Intermediate Representation Schema** | Platform-agnostic JSON schema encoding detection primitives: field references, logical operators, temporal windows, aggregation functions, threshold conditions |
-| 3 | **SIEMBench v1** | 200+ expert-annotated NL–query pairs across 5 platforms, stratified by ATT&CK tactic and query complexity. First open benchmark for this task. |
-| 4 | **Evaluation Framework** | Three-dimensional evaluation: syntactic validity, semantic equivalence (BLEU-4, field-match F1), and execution match |
-| 5 | **Ablation Study** | Systematic comparison of zero-shot vs. few-shot, with-IR vs. without-IR, and GPT-4o vs. Gemini vs. Llama 3 |
+| 1 | **ATT&CK Coverage Drift** | Formal characterization of the divergence between documented ATT&CK coverage and actual cross-platform detection capability |
+| 2 | **NL-SIEM Pipeline** | End-to-end multi-agent architecture: NL → ATT&CK Classification → IR → 5 SIEM outputs via a clean abstraction boundary between comprehension and generation |
+| 3 | **Intermediate Representation Schema** | Platform-agnostic JSON schema with ATT&CK identity as a structural component, encoding detection primitives: field references, logical operators, temporal windows, aggregation functions, threshold conditions |
+| 4 | **SIEMBench v1** | 200+ expert-annotated NL–query pairs across 5 platforms, stratified by ATT&CK tactic and query complexity — the first open benchmark for this task |
+| 5 | **Evaluation Framework** | Three-dimensional evaluation: syntactic validity, semantic equivalence (BLEU-4, field-match F1), and execution match |
+| 6 | **Ablation Study** | Systematic comparison of zero-shot vs. few-shot, with-IR vs. without-IR, and GPT-4o vs. Gemini vs. Llama 3 |
 
 ---
 
-## Motivation
+## End-to-End Example
 
+A single natural-language description — *"Repeated failed SSH authentication attempts originating from the same source IP"* — triggers the complete pipeline. No ATT&CK identifier is provided. No target platform is specified.
+
+**ATT&CK Classification**
 ```
-Analyst writes a detection rule in Splunk SPL
-        ↓
-Same rule needed in QRadar AQL    →  Rewrite manually
-Same rule needed in Elastic EQL   →  Rewrite manually  
-Same rule needed in Sentinel KQL  →  Rewrite manually
-Same rule needed in Wazuh XML     →  Rewrite manually
-
-                   4× the work. 4× the risk of error.
+Tactic:       Credential Access
+Technique:    T1110 — Brute Force
+Sub-technique: T1110.001 — Password Guessing
 ```
-
-With NL-SIEM:
-```
-Analyst describes intent in natural language
-        ↓
-NL-SIEM generates all 5 platform queries simultaneously
-        ↓
-Validated, syntactically correct, semantically equivalent
-```
-
----
-
-## How It Works
-
-A single natural language description — *"Detect repeated failed SSH logins from the same source IP exceeding 50 attempts within 24 hours"* — produces:
 
 **Intermediate Representation (IR)**
 ```json
 {
+  "attack": {
+    "tactic": "credential-access",
+    "technique": "T1110",
+    "sub_technique": "T1110.001"
+  },
   "action": "filter+aggregate",
   "event_type": "authentication",
   "filter": {
@@ -151,15 +191,17 @@ SecurityEvent
   <frequency>50</frequency>
   <timeframe>86400</timeframe>
   <description>Brute force: 50+ failed SSH logins from same IP in 24h</description>
-  <mitre><id>T1110</id></mitre>
+  <mitre><id>T1110.001</id></mitre>
 </rule>
 ```
+
+All five outputs carry the same ATT&CK identity inherited from the IR. The heatmap is green — and this time, the detections fire.
 
 ---
 
 ## Dataset — SIEMBench v1
 
-SIEMBench is the first benchmark dataset specifically constructed for cross-platform SIEM query translation research.
+SIEMBench is the first benchmark dataset specifically constructed for cross-platform SIEM query translation research, with ATT&CK tactic stratification as a first-class property.
 
 | Property | Value |
 |---|---|
@@ -168,7 +210,7 @@ SIEMBench is the first benchmark dataset specifically constructed for cross-plat
 | MITRE ATT&CK tactics | Initial Access, Execution, Persistence, Privilege Escalation, Lateral Movement, Exfiltration |
 | Complexity levels | Simple · Intermediate · Complex |
 | Annotation | Expert-authored ground truth + dual security analyst review |
-| Format | JSON with NL query, IR, per-platform ground truth, tactic label, complexity tier |
+| Format | JSON with NL query, ATT&CK mapping, IR, per-platform ground truth, tactic label, complexity tier |
 | License | CC BY 4.0 |
 
 **Schema example:**
@@ -177,8 +219,10 @@ SIEMBench is the first benchmark dataset specifically constructed for cross-plat
   "id": "SB-042",
   "nl_query": "Detect outbound connections to known threat intelligence IPs in the last hour",
   "tactic": "exfiltration",
+  "technique": "T1048",
   "complexity": "intermediate",
   "ir": {
+    "attack": { "tactic": "exfiltration", "technique": "T1048" },
     "action": "filter",
     "event_type": "network",
     "filter": { "field": "dst_ip", "op": "in", "value": "$TI_IP_LIST" },
@@ -190,7 +234,7 @@ SIEMBench is the first benchmark dataset specifically constructed for cross-plat
     "qradar": "SELECT * FROM events WHERE destinationip IN (SELECT ioc FROM threat_intel) LAST 1 HOURS",
     "elastic": "network where destination.ip in (~threat_intel_ips) and network.direction == \"outbound\"",
     "sentinel": "CommonSecurityLog | where TimeGenerated >= ago(1h) | where DestinationIP in (ThreatIntelIndicators)",
-    "wazuh": "<rule id=\"100042\"><if_sid>0</if_sid><match>outbound</match><description>TI IP match</description></rule>"
+    "wazuh": "<rule id=\"100042\"><if_sid>0</if_sid><match>outbound</match><mitre><id>T1048</id></mitre><description>TI IP match</description></rule>"
   }
 }
 ```
@@ -218,7 +262,35 @@ SIEMBench is the first benchmark dataset specifically constructed for cross-plat
 | GPT-4o Zero-shot | 0.43 | 0.38 | 0.41 | 0.44 | 0.35 | 0.40 |
 
 > *Placeholder values — replace with actual results after running experiments.*  
-> *Full ablation tables, field-match F1 scores, and error analysis in the paper.*
+> *Full ablation tables, field-match F1 scores, ATT&CK fidelity metrics, and error analysis in the paper.*
+
+---
+
+## Execution and Validation Layer
+
+NL-SIEM supports execution-backed validation through a connector-based architecture. Generated detections can be executed directly against supported SIEM environments, with results returned to the framework for operational validation — enabling assessment of not just syntactic correctness but live behavioral equivalence.
+
+### Supported Connectors
+
+| Platform | Capability | Status |
+|---|---|---|
+| Elastic Security | Query execution via Elastic Cloud ES\|QL API | Available |
+| Wazuh | Rule deployment and validation | Available |
+| Splunk | Query execution | Planned |
+| IBM QRadar | Query execution | Planned |
+| Microsoft Sentinel | Query execution | Planned |
+
+### Execution Pipeline
+
+```
+Natural Language Query
+  → ATT&CK Classification
+  → Intermediate Representation
+  → Platform Translation
+  → Execution Agent
+  → SIEM Connector
+  → Live Results + ATT&CK Fidelity Validation
+```
 
 ---
 
@@ -256,41 +328,15 @@ result = translator.translate(
     platforms=["splunk", "qradar", "elastic", "sentinel", "wazuh"]
 )
 
-print(result["ir"])          # Intermediate Representation
-print(result["splunk"])      # Splunk SPL
-print(result["qradar"])      # IBM QRadar AQL
-print(result["elastic"])     # Elastic EQL
-print(result["sentinel"])    # Microsoft Sentinel KQL
-print(result["wazuh"])       # Wazuh XML Rule
+print(result["attack"])          # ATT&CK classification
+print(result["ir"])              # Intermediate Representation
+print(result["splunk"])          # Splunk SPL
+print(result["qradar"])          # IBM QRadar AQL
+print(result["elastic"])         # Elastic EQL
+print(result["sentinel"])        # Microsoft Sentinel KQL
+print(result["wazuh"])           # Wazuh XML Rule
 ```
-## Execution and Validation Layer
 
-Unlike traditional query-generation systems, NL-SIEM supports execution-backed validation through a connector-based architecture.
-
-Generated detections can be executed directly against supported SIEM environments using platform-specific connectors. Execution results are collected and returned to the framework, enabling validation of translated detections against live telemetry.
-
-### Supported Connectors
-
-| Platform           | Capability                           |        |
-| ------------------ | ------------------------------------ | ------ |
-| Elastic Security   | Query execution via Elastic Cloud ES | QL API |
-| Wazuh              | Rule deployment and validation       |        |
-| Splunk             | Query execution (planned)            |        |
-| IBM QRadar         | Query execution (planned)            |        |
-| Microsoft Sentinel | Query execution (planned)            |        |
-
-### Execution Pipeline
-
-Natural Language Query
-→ Intermediate Representation
-→ Platform Translation
-→ Execution Agent
-→ SIEM Connector
-→ Live Results
-
-This design allows NL-SIEM to evaluate not only syntactic correctness but also operational validity of generated detections.
-```
-```
 ---
 
 ## Running Evaluations
@@ -312,6 +358,7 @@ python scripts/export_tables.py \
 ---
 
 ## Repository Structure
+
 ```
 nl-siem/
 │
@@ -345,6 +392,7 @@ nl-siem/
 ├── src/
 │   │
 │   ├── agents/
+│   │   ├── attack_classifier_agent.py
 │   │   ├── parser_agent.py
 │   │   ├── validator_agent.py
 │   │   ├── refinement_agent.py
@@ -391,6 +439,7 @@ nl-siem/
 │   ├── evaluation/
 │   │   ├── syntax_validator.py
 │   │   ├── semantic_scorer.py
+│   │   ├── attack_fidelity.py
 │   │   ├── execution_match.py
 │   │   ├── error_analyzer.py
 │   │   ├── metrics_aggregator.py
@@ -418,36 +467,42 @@ nl-siem/
 └── test_*.py
 ```
 
-
-
 ### Directory Overview
 
-| Directory         | Purpose                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `src/agents`      | Multi-agent orchestration for parsing, validation, refinement, and translation       |
-| `src/ir`          | Platform-agnostic Intermediate Representation (IR) schema and validation logic       |
-| `src/translators` | IR → SIEM query translators for Splunk, QRadar, Elastic, Sentinel, and Wazuh         |
-| `src/llm`         | LLM abstraction layer, prompting framework, response parsing, and token tracking     |
-| `src/rag`         | Retrieval-Augmented Generation (RAG) pipeline including embeddings and vector search |
-| `src/evaluation`  | Benchmarking, ablation studies, semantic scoring, and execution-level validation     |
-| `src/utils`       | Shared utilities including configuration, logging, exceptions, and file operations   |
-| `knowledge_base`  | SIEM documentation corpus used for retrieval and grounding                           |
-| `datasets`        | SIEMBench benchmark dataset, raw query banks, and processed evaluation artifacts     |
-| `experiments`     | Experiment configurations, ablation runs, and evaluation outputs                     |
-| `scripts`         | Command-line entry points for dataset generation, evaluation, and benchmarking       |
-| `tests`           | Unit tests and end-to-end integration tests                                          |
-| `docs`            | Architecture diagrams, paper assets, figures, tables, and manuscript drafts          |
+| Directory | Purpose |
+|---|---|
+| `src/agents` | Multi-agent orchestration: ATT&CK classification, parsing, validation, refinement, and translation |
+| `src/ir` | Platform-agnostic IR schema with ATT&CK identity as a structural component |
+| `src/translators` | IR → SIEM query translators for Splunk, QRadar, Elastic, Sentinel, and Wazuh |
+| `src/llm` | LLM abstraction layer, prompting framework, response parsing, and token tracking |
+| `src/rag` | Retrieval-Augmented Generation pipeline including embeddings and vector search |
+| `src/evaluation` | Benchmarking, ATT&CK fidelity scoring, ablation studies, and execution-level validation |
+| `src/utils` | Shared utilities: configuration, logging, exceptions, and file operations |
+| `knowledge_base` | SIEM documentation corpus and MITRE ATT&CK knowledge base used for retrieval |
+| `datasets` | SIEMBench benchmark dataset, raw query banks, and processed evaluation artifacts |
+| `experiments` | Experiment configurations, ablation runs, and evaluation outputs |
+| `scripts` | Command-line entry points for dataset generation, evaluation, and benchmarking |
+| `tests` | Unit tests and end-to-end integration tests |
+| `docs` | Architecture diagrams, paper assets, figures, tables, and manuscript drafts |
 
 ### Design Philosophy
 
-The system follows a modular research-oriented architecture:
+The system follows a modular, ATT&CK-first research architecture:
 
-Natural Language Query → Retrieval (RAG) → Parser Agent → Intermediate Representation (IR) → Validation → Platform-Specific Translation → Evaluation
+```
+Natural Language Query
+  → ATT&CK Classification (tactic · technique · sub-technique)
+  → Retrieval (RAG over platform docs + MITRE knowledge base)
+  → Parser Agent
+  → Intermediate Representation (ATT&CK identity embedded structurally)
+  → Validation
+  → Platform-Specific Translation (5 independent agents)
+  → Evaluation (syntactic · semantic · ATT&CK fidelity · execution match)
+```
 
-The Intermediate Representation (IR) acts as the central abstraction layer, decoupling semantic understanding from SIEM-specific query syntax and enabling consistent translation across heterogeneous security analytics platforms.
+The Intermediate Representation acts as the central abstraction layer, decoupling semantic understanding from SIEM-specific query syntax. ATT&CK identity propagates through this layer as a first-class structural property — ensuring that coverage metrics reflect genuine detection capability rather than inherited labels.
 
-
-
+---
 
 ## Platform Validation Setup
 
@@ -464,7 +519,7 @@ The Intermediate Representation (IR) acts as the central abstraction layer, deco
 ## Target Venues
 
 - **RAID** — Research in Attacks, Intrusions and Defenses
-- **IEEE DSC** — IEEE Conference on Dependable and Secure Computing  
+- **IEEE DSC** — IEEE Conference on Dependable and Secure Computing
 - **ACL / EMNLP** — NLP for Cybersecurity Workshop track
 - **arXiv cs.CR** — Preprint (immediate release on Day 20)
 

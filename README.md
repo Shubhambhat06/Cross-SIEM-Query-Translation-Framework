@@ -139,14 +139,15 @@ Intermediate Representation
 Execution Agent                  src/agents/execution_agent.py
   Submit · retrieve results · ATT&CK fidelity check
   Elastic + Wazuh: live, validated at PESU C-ISFCR SOC
-```
+
 
 RAG retrieval: six corpora indexed separately under 
 `src/knowledge_base/` — one per platform plus MITRE ATT&CK. Each 
 translation agent retrieves k=2 chunks per platform across all five 
 SIEM corpora simultaneously. Classifier retrieves top-5 from MITRE 
 corpus. All retrieval runs locally — no external embedding API.
-
+```
+```
 ---
 
 ## End-to-End Example

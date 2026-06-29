@@ -84,7 +84,7 @@ NL-SIEM workflow:
 ---
 
 ## Architecture
-```
+
 <p align="center">
   <img src="svg-export-1x.png" width="800">
   <br>
@@ -147,7 +147,7 @@ translation agent retrieves k=2 chunks per platform across all five
 SIEM corpora simultaneously. Classifier retrieves top-5 from MITRE 
 corpus. All retrieval runs locally — no external embedding API.
 
-```
+
 
 ---
 

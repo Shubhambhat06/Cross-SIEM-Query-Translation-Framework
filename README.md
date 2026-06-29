@@ -2,154 +2,213 @@
 
 <h1>NL-SIEM</h1>
 
-<h3>ATT&CK Coverage Drift: Cross-Platform Detection Engineering and Execution Validation<br/>via Large Language Models, Intermediate Representation, and Multi-SIEM Connectors</h3>
+<h3>Cross-Platform SIEM Detection Generation and ATT&CK Coverage Drift 
+Prevention via Intermediate Representation and Multi-Agent LLMs</h3>
 
 <p>
-  <a href="https://arxiv.org/abs/XXXX.XXXXX">
-    <img src="https://img.shields.io/badge/arXiv-XXXX.XXXXX-b31b1b.svg?style=for-the-badge" alt="arXiv Paper"/>
-  </a>
-  &nbsp;
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3572A5?style=for-the-badge&logo=python&logoColor=white" alt="Python"/>
-  &nbsp;
-  <img src="https://img.shields.io/badge/License-MIT-2e7d32?style=for-the-badge" alt="License"/>
-  &nbsp;
-  <img src="https://img.shields.io/badge/Dataset-SIEMBench_v1-7B1FA2?style=for-the-badge" alt="Dataset"/>
-  &nbsp;
-  <img src="https://img.shields.io/badge/Status-Under_Review-F57C00?style=for-the-badge" alt="Status"/>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3572A5?style=for-the-badge&logo=python&logoColor=white"/>
+  <img src="https://img.shields.io/badge/License-MIT-2e7d32?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Dataset-SIEMBench_v1-7B1FA2?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Status-Under_Review-F57C00?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Black_Hat_Arsenal-India_2026-black?style=for-the-badge"/>
 </p>
 
 <p>
+  <b>Elastic ES|QL</b> &nbsp;·&nbsp;
+  <b>Elastic EQL</b> &nbsp;·&nbsp;
+  <b>Wazuh XML</b> &nbsp;·&nbsp;
   <b>Splunk SPL</b> &nbsp;·&nbsp;
   <b>IBM QRadar AQL</b> &nbsp;·&nbsp;
-  <b>Elastic EQL / KQL</b> &nbsp;·&nbsp;
-  <b>Microsoft Sentinel KQL</b> &nbsp;·&nbsp;
-  <b>Wazuh XML</b>
+  <b>Microsoft Sentinel KQL</b>
 </p>
 
 </div>
 
 ---
 
-## The Problem: Your Heatmap Is Green, But Your Detection Doesn't Fire
+## The Problem: Your Heatmap Is Green But Your Detection Doesn't Fire
 
-ATT&CK has become the de facto framework for measuring detection coverage. Security teams map detections to ATT&CK techniques, generate heatmaps, and use coverage metrics to communicate security posture to analysts, leadership, and incident responders. The assumption behind all of this is straightforward: if a technique is marked as covered, a corresponding detection capability exists.
+ATT&CK coverage heatmaps are how security teams communicate detection 
+posture. The assumption behind them is that a technique marked covered 
+has a working detection behind it.
 
-In modern environments, that assumption breaks down.
+In multi-SIEM environments, that assumption breaks silently.
 
-Most organizations operate multiple SIEM platforms simultaneously — a consequence of cloud adoption, mergers and acquisitions, regulatory requirements, and technology transitions. Detections engineered for one platform must be recreated, adapted, or translated across several others. As detections cross platform boundaries, differences in query semantics, aggregation behavior, field mappings, and temporal constraints silently degrade them. A translated detection may preserve its ATT&CK label while losing its behavioral meaning. The rule deploys successfully. The heatmap stays green. The detection no longer fires correctly.
+Organizations accumulate SIEM platforms over time — cloud migrations, 
+acquisitions, regulatory mandates, vendor transitions. Detections get 
+ported across platforms manually or through informal scripting. When 
+they cross platform boundaries, differences in field naming, time 
+window semantics, aggregation behavior, and threshold expression 
+silently degrade them. The ported rule deploys. The heatmap stays 
+green. The detection no longer catches the same behavior.
 
-We call this **ATT&CK Coverage Drift**: the divergence between documented ATT&CK coverage and actual cross-platform detection capability.
+We call this **ATT&CK Coverage Drift**: the divergence between 
+documented ATT&CK coverage and actual cross-platform detection 
+capability.
 
-**NL-SIEM** is a multi-agent LLM framework that addresses coverage drift at its source. Rather than attaching ATT&CK metadata to detections after generation, NL-SIEM treats ATT&CK semantics as the structural foundation of the detection engineering process — embedded into a platform-agnostic Intermediate Representation that every downstream translator must preserve.
+It also happens within a single vendor. Elastic Security's transition 
+from EQL to ES|QL means existing rule libraries need conversion — 
+the two languages differ fundamentally in execution model, not just 
+syntax.
+
+**NL-SIEM** prevents drift by treating ATT&CK identity as a structural 
+input to detection generation, not a label attached afterward.
 
 ---
 
-## How NL-SIEM Preserves ATT&CK Fidelity
+## How It Works
 
 ```
-Traditional Workflow:
-  Write detection in Splunk SPL (mapped to T1110.001)
-          ↓
-  Translate to QRadar AQL     →  ATT&CK label copied, semantics drift
-  Translate to Elastic EQL    →  ATT&CK label copied, semantics drift
-  Translate to Sentinel KQL   →  ATT&CK label copied, semantics drift
-  Translate to Wazuh XML      →  ATT&CK label copied, semantics drift
+Traditional workflow:
+  Write detection in Splunk → ATT&CK label copied to each port
+  Port to QRadar            → label survives, semantics drift
+  Port to Elastic           → label survives, semantics drift
+  Port to Wazuh             → label survives, semantics drift
+  Heatmap: green. Coverage: decayed.
 
-                     Heatmap stays green. Coverage has decayed.
-
-NL-SIEM Workflow:
-  Analyst describes threat intent in natural language
-          ↓
-  ATT&CK Classifier resolves tactic, technique, sub-technique
-          ↓
-  Intermediate Representation encodes ATT&CK identity + detection semantics
-          ↓
-  Five platform translators inherit the same ATT&CK-bound contract
-          ↓
-  Syntactically valid, semantically equivalent, ATT&CK-faithful detections
+NL-SIEM workflow:
+  Analyst describes behavior in plain English
+    ↓
+  ATT&CK Classifier resolves tactic / technique / sub-technique
+    ↓
+  Intermediate Representation encodes ATT&CK identity +
+  detection semantics as a required structural field, not metadata
+    ↓
+  Independent translation agents for each platform
+  all inherit the same ATT&CK-bound contract
+    ↓
+  Syntactically valid, semantically consistent,
+  ATT&CK-faithful detections across every platform
 ```
 
-ATT&CK fidelity is preserved because every detection inherits a common semantic definition — not because outputs are compared and corrected after generation.
-
 ---
 
-## System Architecture
+## Architecture
 
-<div align="center">
-  <img src="siem_architecture.svg" alt="NL-SIEM Architecture" width="800"/>
-</div>
+```
+Natural Language Query
+  │
+  ▼
+ATT&CK Classifier Agent          src/agents/attck_classifier_agent.py
+  RAG over locally indexed MITRE ATT&CK corpus
+  all-MiniLM-L6-v2 · FAISS · runs fully local · no external API
+  Resolves: tactic · technique · sub-technique
+  Halts explicitly on classification failure — no silent guessing
+  │
+  ▼
+Parser Agent + IR Construction   src/agents/parser_agent.py
+  │                              src/ir/schema.py · validator.py
+  ▼
+Intermediate Representation
+  Required fields:
+    attack       tactic · technique · sub-technique (schema-invalid if absent)
+    action       filter | filter+aggregate
+    event_type   authentication | network | process | ...
+    filter       field · operator · value in canonical normalized form
+    group_by     aggregation dimensions
+    time_window  canonical duration (24h · 5m · 1h)
+    threshold    comparison expression (>50 · >=10)
+  │
+  ├──► Elastic ES|QL Agent    src/translators/elastic.py
+  │      EVAL mitre_sub_technique = "T1110.001"
+  │      Live execution: src/connectors/elastic_connector.py
+  │
+  ├──► EQL→ES|QL Bridge       src/translators/esql_converter.py
+  │      filter+aggregate class only
+  │      ESQLConversionError on sequence input — no silent approximation
+  │
+  ├──► Wazuh Agent             src/translators/wazuh.py
+  │      <mitre><id>T1110.001</id></mitre>
+  │      Live deployment: src/connectors/wazuh_connector.py
+  │
+  ├──► Splunk Agent            src/translators/splunk.py
+  │      connector: src/connectors/splunk_connector.py (near-term)
+  │
+  ├──► QRadar Agent            src/translators/qradar.py
+  │      connector: near-term
+  │
+  └──► Sentinel Agent          src/translators/sentinel.py
+         connector: near-term
+  │
+  ▼
+Execution Agent                  src/agents/execution_agent.py
+  Submit · retrieve results · ATT&CK fidelity check
+  Elastic + Wazuh: live, validated at PESU C-ISFCR SOC
+```
 
-> *Figure 1. End-to-end NL-SIEM pipeline: natural language input is classified against the ATT&CK knowledge base, encoded into a platform-agnostic IR that embeds ATT&CK identity as a structural property, and then translated independently by five SIEM-specific agents — each bound to the same behavioral contract.*
-
-### Stage 1 — ATT&CK-Aware Threat Classification
-
-A dedicated ATT&CK Classifier Agent reasons over the ATT&CK knowledge base to resolve the most appropriate tactic, technique, and sub-technique from a natural-language description. Analysts provide no ATT&CK identifiers and no platform-specific details. The classifier establishes the canonical adversary behavior representation before any platform-dependent logic is introduced. This mapping becomes the semantic anchor for the rest of the pipeline.
-
-### Stage 2 — Intermediate Representation as a Semantic Contract
-
-Once ATT&CK context is established, the system encodes detection intent into a platform-independent Intermediate Representation. The IR captures:
-
-- ATT&CK tactic, technique, and sub-technique (embedded structurally, not as metadata)
-- Event categories and telemetry requirements
-- Detection predicates and filtering logic
-- Temporal constraints and aggregation functions
-- Threshold conditions and logical event relationships
-
-By separating behavioral intent from implementation syntax, the IR functions as a semantic contract that all downstream translators must honor.
-
-### Stage 3 — Cross-Platform Detection Translation
-
-Five independent translation agents — each supported by a RAG retrieval layer grounded in curated platform documentation — consume the same IR and generate platform-specific detection logic. Because all outputs originate from a shared ATT&CK-bound representation, cross-platform consistency is an architectural property, not a post-generation validation task.
-
----
-
-## Research Contributions
-
-| # | Contribution | Description |
-|---|---|---|
-| 1 | **ATT&CK Coverage Drift** | Formal characterization of the divergence between documented ATT&CK coverage and actual cross-platform detection capability |
-| 2 | **NL-SIEM Pipeline** | End-to-end multi-agent architecture: NL → ATT&CK Classification → IR → 5 SIEM outputs via a clean abstraction boundary between comprehension and generation |
-| 3 | **Intermediate Representation Schema** | Platform-agnostic JSON schema with ATT&CK identity as a structural component, encoding detection primitives: field references, logical operators, temporal windows, aggregation functions, threshold conditions |
-| 4 | **SIEMBench v1** | 200+ expert-annotated NL–query pairs across 5 platforms, stratified by ATT&CK tactic and query complexity — the first open benchmark for this task |
-| 5 | **Evaluation Framework** | Three-dimensional evaluation: syntactic validity, semantic equivalence (BLEU-4, field-match F1), and execution match |
-| 6 | **Ablation Study** | Systematic comparison of zero-shot vs. few-shot, with-IR vs. without-IR, and GPT-4o vs. Gemini vs. Llama 3 |
+RAG retrieval: six corpora indexed separately under 
+`src/knowledge_base/` — one per platform plus MITRE ATT&CK. Each 
+translation agent retrieves k=2 chunks per platform across all five 
+SIEM corpora simultaneously. Classifier retrieves top-5 from MITRE 
+corpus. All retrieval runs locally — no external embedding API.
 
 ---
 
 ## End-to-End Example
 
-A single natural-language description — *"Repeated failed SSH authentication attempts originating from the same source IP"* — triggers the complete pipeline. No ATT&CK identifier is provided. No target platform is specified.
+Input: *"Repeated failed SSH authentication attempts from the same 
+source IP over 24 hours"*
+
+No ATT&CK identifier provided. No platform selected.
 
 **ATT&CK Classification**
 ```
-Tactic:       Credential Access
-Technique:    T1110 — Brute Force
+Tactic:        Credential Access
+Technique:     T1110 — Brute Force
 Sub-technique: T1110.001 — Password Guessing
 ```
 
-**Intermediate Representation (IR)**
+**Intermediate Representation**
 ```json
 {
   "attack": {
-    "tactic": "credential-access",
-    "technique": "T1110",
+    "tactic":        "credential-access",
+    "technique":     "T1110",
     "sub_technique": "T1110.001"
   },
-  "action": "filter+aggregate",
-  "event_type": "authentication",
+  "action":      "filter+aggregate",
+  "event_type":  "authentication",
   "filter": {
     "field": "status",
-    "op": "eq",
+    "op":    "eq",
     "value": "failed"
   },
-  "group_by": ["src_ip"],
+  "group_by":    ["src_ip"],
   "time_window": "24h",
-  "threshold": { "count": ">50" }
+  "threshold":   { "count": ">50" }
 }
 ```
 
+**Elastic ES|QL** ✓ live execution validated
+```sql
+FROM logs-*
+| WHERE event.category == "authentication"
+    AND event.outcome  == "failure"
+    AND @timestamp >= NOW() - 24 hours
+| STATS failed_count = COUNT() BY source.ip
+| WHERE failed_count > 50
+| EVAL mitre_sub_technique = "T1110.001"
+```
+
+**Wazuh XML** ✓ live deployment validated
+```xml
+<rule id="100050" level="10">
+  <if_sid>5503</if_sid>
+  <same_source_ip/>
+  <frequency>50</frequency>
+  <timeframe>86400</timeframe>
+  <description>
+    Brute force: 50+ failed SSH logins from
+    single source IP in 24h [T1110.001]
+  </description>
+  <mitre>
+    <id>T1110.001</id>
+  </mitre>
+</rule>
+```
+
 **Splunk SPL**
-```spl
+```
 index=* status=failed earliest=-24h
 | stats count by src_ip
 | where count > 50
@@ -157,21 +216,12 @@ index=* status=failed earliest=-24h
 
 **IBM QRadar AQL**
 ```sql
-SELECT sourceip, COUNT(*) as attempts
+SELECT sourceip, COUNT(*) AS attempts
 FROM events
 WHERE status = 'failed'
-  AND LOGSOURCETYPENAME(devicetype) = 'SSH'
 GROUP BY sourceip
 HAVING attempts > 50
 LAST 24 HOURS
-```
-
-**Elastic EQL**
-```eql
-authentication where event.outcome == "failure"
-| stats count = count() by source.ip
-| where count > 50
-  and @timestamp >= now() - 24h
 ```
 
 **Microsoft Sentinel KQL**
@@ -183,158 +233,151 @@ SecurityEvent
 | where FailedAttempts > 50
 ```
 
-**Wazuh XML Rule**
-```xml
-<rule id="100050" level="10">
-  <if_sid>5503</if_sid>
-  <same_source_ip/>
-  <frequency>50</frequency>
-  <timeframe>86400</timeframe>
-  <description>Brute force: 50+ failed SSH logins from same IP in 24h</description>
-  <mitre><id>T1110.001</id></mitre>
-</rule>
-```
-
-All five outputs carry the same ATT&CK identity inherited from the IR. The heatmap is green — and this time, the detections fire.
+The time window travels as `24 hours` in ES|QL and `86400` seconds 
+in Wazuh's `<timeframe>`. The ATT&CK sub-technique propagates into 
+every output. The IR is the single source of truth.
 
 ---
 
-## Dataset — SIEMBench v1
+## EQL → ES|QL Syntax Bridge
 
-SIEMBench is the first benchmark dataset specifically constructed for cross-platform SIEM query translation research, with ATT&CK tactic stratification as a first-class property.
+`src/translators/esql_converter.py`
+
+Elastic's detection ecosystem is mid-transition from EQL to ES|QL. 
+The bridge handles conversion for filter-and-aggregate-class rules.
+
+| Mismatch | EQL | ES|QL mapping |
+|---|---|---|
+| Event-type scoping | `authentication where ...` implicit | Explicit `WHERE event.category` injected from IR `event_type` |
+| Aggregation | `stats count = count() by source.ip` | `STATS count = COUNT() BY source.ip` |
+| Threshold | `where count > 50` | `WHERE count > 50` |
+| ECS alias expansion | Short aliases valid in event-type blocks | Fully qualified paths required; pre-processing step in bridge |
+| Null handling in groups | Null keys included | `COALESCE` wrapper injected |
+| Time anchor | `within` measures inter-event span | `@timestamp` filter from query time — documented semantic difference |
+| Sequence correlation | Native `sequence` keyword | **Not supported — `ESQLConversionError` raised explicitly** |
+
+Sequence constructs throw an error rather than producing a wrong 
+answer. That is intentional. Sequence support is the next roadmap 
+item.
+
+All filter+aggregate ES|QL output is verified against Elastic's 
+`_query/esql` validation endpoint.
+
+---
+
+## SIEMBench v1
+
+`data/siembench.jsonl` · `data/siembench.train.jsonl` · 
+`data/siembench.dev.jsonl` · `data/siembench.test.jsonl`
+
+241 JSONL records pairing natural-language queries with ATT&CK 
+annotations and IR encodings. The first open benchmark for 
+cross-platform detection generation that treats ATT&CK provenance 
+as a first-class property.
 
 | Property | Value |
 |---|---|
-| Total annotated pairs | 200+ |
-| Platforms | Splunk, QRadar, Elastic, Sentinel, Wazuh |
-| MITRE ATT&CK tactics | Initial Access, Execution, Persistence, Privilege Escalation, Lateral Movement, Exfiltration |
-| Complexity levels | Simple · Intermediate · Complex |
-| Annotation | Expert-authored ground truth + dual security analyst review |
-| Format | JSON with NL query, ATT&CK mapping, IR, per-platform ground truth, tactic label, complexity tier |
+| Total records | 241 |
+| Format | JSONL |
+| ATT&CK tactics | Initial Access · Execution · Persistence · Privilege Escalation · Defense Evasion · Credential Access · Discovery · Exfiltration |
+| Complexity tiers | Simple · Intermediate · Complex |
+| Fields per record | NL query · tactic · technique · sub-technique · complexity · IR |
 | License | CC BY 4.0 |
 
-**Schema example:**
 ```json
 {
-  "id": "SB-042",
-  "nl_query": "Detect outbound connections to known threat intelligence IPs in the last hour",
-  "tactic": "exfiltration",
-  "technique": "T1048",
-  "complexity": "intermediate",
+  "id":            "SB-042",
+  "nl_query":      "Detect outbound connections to known threat 
+                    intel IPs, last hour",
+  "tactic":        "exfiltration",
+  "technique":     "T1048",
+  "sub_technique": "T1048.003",
+  "complexity":    "intermediate",
   "ir": {
-    "attack": { "tactic": "exfiltration", "technique": "T1048" },
-    "action": "filter",
-    "event_type": "network",
-    "filter": { "field": "dst_ip", "op": "in", "value": "$TI_IP_LIST" },
-    "direction": "outbound",
-    "time_window": "1h"
-  },
-  "ground_truth": {
-    "splunk": "index=network_traffic Direction=outbound earliest=-1h | lookup threat_intel dst_ip OUTPUT is_malicious | where is_malicious=true",
-    "qradar": "SELECT * FROM events WHERE destinationip IN (SELECT ioc FROM threat_intel) LAST 1 HOURS",
-    "elastic": "network where destination.ip in (~threat_intel_ips) and network.direction == \"outbound\"",
-    "sentinel": "CommonSecurityLog | where TimeGenerated >= ago(1h) | where DestinationIP in (ThreatIntelIndicators)",
-    "wazuh": "<rule id=\"100042\"><if_sid>0</if_sid><match>outbound</match><mitre><id>T1048</id></mitre><description>TI IP match</description></rule>"
+    "attack": {
+      "tactic":        "exfiltration",
+      "technique":     "T1048",
+      "sub_technique": "T1048.003"
+    },
+    "action":      "filter+aggregate",
+    "event_type":  "network",
+    "filter": {
+      "field": "dst_ip",
+      "op":    "in",
+      "value": "$TI_IP_LIST"
+    },
+    "group_by":    ["destination.ip"],
+    "time_window": "1h",
+    "threshold":   { "count": ">1" }
   }
 }
 ```
 
 ---
 
-## Experimental Results
-
-### Syntactic Validity (%)
-
-| Condition | Splunk | QRadar | Elastic | Sentinel | Wazuh | **Avg** |
-|---|---|---|---|---|---|---|
-| GPT-4o + IR + RAG | **94.1** | **89.3** | **92.7** | **93.5** | **87.2** | **91.4** |
-| GPT-4o + IR | 88.6 | 83.1 | 87.4 | 89.0 | 81.5 | 85.9 |
-| GPT-4o Zero-shot | 71.2 | 64.8 | 69.3 | 72.1 | 61.4 | 67.8 |
-| Llama 3 + IR + RAG | 82.3 | 76.9 | 80.1 | 81.7 | 74.6 | 79.1 |
-| Gemini + IR + RAG | 85.4 | 79.2 | 83.6 | 84.9 | 78.0 | 82.2 |
-
-### Semantic Equivalence — BLEU-4
-
-| Condition | Splunk | QRadar | Elastic | Sentinel | Wazuh | **Avg** |
-|---|---|---|---|---|---|---|
-| GPT-4o + IR + RAG | **0.71** | **0.64** | **0.69** | **0.72** | **0.61** | **0.67** |
-| GPT-4o + IR | 0.63 | 0.56 | 0.61 | 0.65 | 0.53 | 0.60 |
-| GPT-4o Zero-shot | 0.43 | 0.38 | 0.41 | 0.44 | 0.35 | 0.40 |
-
-> *Placeholder values — replace with actual results after running experiments.*  
-> *Full ablation tables, field-match F1 scores, ATT&CK fidelity metrics, and error analysis in the paper.*
-
----
-
-## Execution and Validation Layer
-
-NL-SIEM supports execution-backed validation through a connector-based architecture. Generated detections can be executed directly against supported SIEM environments, with results returned to the framework for operational validation — enabling assessment of not just syntactic correctness but live behavioral equivalence.
-
-### Supported Connectors
+## Connectors
 
 | Platform | Capability | Status |
 |---|---|---|
-| Elastic Security | Query execution via Elastic Cloud ES\|QL API | Available |
-| Wazuh | Rule deployment and validation | Available |
-| Splunk | Query execution | Planned |
-| IBM QRadar | Query execution | Planned |
-| Microsoft Sentinel | Query execution | Planned |
+| Elastic Security | ES|QL live execution via `_query/esql` | ✓ Implemented · validated at C-ISFCR |
+| Elastic Security | EQL→ES|QL bridge (filter+aggregate) | ✓ Implemented · partial |
+| Wazuh | Rule deployment + validation via Wazuh API | ✓ Implemented · validated at C-ISFCR |
+| Splunk | SPL REST API execution | Near-term |
+| IBM QRadar | AQL query execution | Near-term |
+| Microsoft Sentinel | Azure Monitor API | Near-term |
 
-### Execution Pipeline
-
-```
-Natural Language Query
-  → ATT&CK Classification
-  → Intermediate Representation
-  → Platform Translation
-  → Execution Agent
-  → SIEM Connector
-  → Live Results + ATT&CK Fidelity Validation
-```
+The Elastic and Wazuh connectors have been used in a production 
+detection engineering workflow at PESU C-ISFCR, PES University. 
+This is execution-backed validation — not syntax checking.
 
 ---
 
 ## Installation
 
 ```bash
-# Clone
-git clone https://github.com/yourusername/siem-query-translator.git
-cd siem-query-translator
+git clone https://github.com/Shubhambhat06/nl-siem.git
+cd nl-siem
 
-# Virtual environment
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 
-# Dependencies
 pip install -r requirements.txt
 
-# Environment
 cp .env.example .env
-# Add: GOOGLE_API_KEY=... or OPENAI_API_KEY=...
+# Add your LLM API key:
+# OPENAI_API_KEY=...  or  GOOGLE_API_KEY=...
 ```
+
+The RAG pipeline runs fully locally. No embedding API key needed.
 
 ---
 
 ## Quickstart
 
-```python
-from src.main import NLSIEMTranslator
+```bash
+# Ingest knowledge base (first time only)
+python scripts/ingest_knowledge_base.py
 
-translator = NLSIEMTranslator()
+# Translate a query
+python scripts/translate_query.py \
+  --query "Detect repeated failed SSH logins from the same IP" \
+  --platforms elastic wazuh splunk
+```
 
-result = translator.translate(
-    query="Detect more than 10 failed login attempts "
-          "from the same user within 5 minutes",
-    platforms=["splunk", "qradar", "elastic", "sentinel", "wazuh"]
-)
+---
 
-print(result["attack"])          # ATT&CK classification
-print(result["ir"])              # Intermediate Representation
-print(result["splunk"])          # Splunk SPL
-print(result["qradar"])          # IBM QRadar AQL
-print(result["elastic"])         # Elastic EQL
-print(result["sentinel"])        # Microsoft Sentinel KQL
-print(result["wazuh"])           # Wazuh XML Rule
+## Running the ATT&CK Coverage Audit
+
+```bash
+# Pre-deployment audit
+python scripts/run_attck_coverage_audit.py --mode pre
+
+# Post-deployment audit  
+python scripts/run_attck_coverage_audit.py --mode post
+
+# Results land in:
+# experiments/results/attck_coverage/pre_deployment_audit.json
+# experiments/results/attck_coverage/post_deployment_audit.json
 ```
 
 ---
@@ -344,15 +387,14 @@ print(result["wazuh"])           # Wazuh XML Rule
 ```bash
 # Full evaluation on SIEMBench v1
 python scripts/run_evaluation.py \
-  --dataset  datasets/benchmark/siembench_v1.json \
-  --model    gpt-4o \
+  --dataset data/siembench.test.jsonl \
   --condition ir+rag \
-  --output   experiments/results/raw/
+  --output experiments/results/
 
-# Aggregate metrics and generate paper tables
-python scripts/export_tables.py \
-  --results  experiments/results/raw/ \
-  --output   experiments/results/aggregated/
+# Ablation configs live in experiments/configs/
+# ablation_ir_rag.yaml · ablation_ir_only.yaml · ablation_zero_shot.yaml
+python scripts/run_evaluation.py \
+  --config experiments/configs/ablation_zero_shot.yaml
 ```
 
 ---
@@ -362,37 +404,47 @@ python scripts/export_tables.py \
 ```
 nl-siem/
 │
-├── configs/                         # Platform-specific connector configs
+├── configs/                    platform connector configs
 │   ├── elastic.yaml
-│   ├── qradar.yaml
-│   ├── sentinel.yaml
+│   ├── wazuh.yaml
 │   ├── splunk.yaml
-│   └── wazuh.yaml
+│   ├── qradar.yaml
+│   └── sentinel.yaml
 │
-├── data/                            # SIEMBench dataset
+├── data/                       SIEMBench v1 dataset
+│   ├── siembench.jsonl         full dataset (241 records)
 │   ├── siembench.train.jsonl
 │   ├── siembench.dev.jsonl
 │   ├── siembench.test.jsonl
-│   ├── manifest.json
+│   ├── siembench_attck.jsonl   ATT&CK-annotated split
 │   ├── stats.json
+│   ├── manifest.json
 │   └── DATASET_CARD.md
 │
-├── generated_rules/                 # Generated detection content
-│   └── local_rules.xml
+├── experiments/
+│   ├── configs/                ablation experiment configs
+│   │   ├── ablation_ir_rag.yaml
+│   │   ├── ablation_ir_only.yaml
+│   │   └── ablation_zero_shot.yaml
+│   └── results/attck_coverage/
+│       ├── pre_deployment_audit.json
+│       └── post_deployment_audit.json
 │
-├── scripts/
-│   ├── translate_query.py           # Main NL-SIEM entrypoint
+├── knowledge_base/             MITRE ATT&CK enterprise JSON
+│
+├── scripts/                    CLI entrypoints
+│   ├── translate_query.py
 │   ├── ingest_knowledge_base.py
+│   ├── build_siembench.py
 │   ├── generate_dataset.py
+│   ├── label_attck.py
+│   ├── run_attck_coverage_audit.py
 │   ├── run_evaluation.py
-│   ├── export_tables.py
-│   ├── test_splunk_connection.py
-│   └── test_wazuh_connection.py
+│   └── export_tables.py
 │
 ├── src/
-│   │
-│   ├── agents/
-│   │   ├── attack_classifier_agent.py
+│   ├── agents/                 pipeline orchestration
+│   │   ├── attck_classifier_agent.py
 │   │   ├── parser_agent.py
 │   │   ├── validator_agent.py
 │   │   ├── refinement_agent.py
@@ -400,58 +452,60 @@ nl-siem/
 │   │   ├── execution_agent.py
 │   │   └── rule_deployment_agent.py
 │   │
-│   ├── connectors/
-│   │   ├── base.py
-│   │   ├── factory.py
-│   │   ├── elastic_connector.py
-│   │   ├── splunk_connector.py
-│   │   └── wazuh_connector.py
-│   │
-│   ├── ir/
+│   ├── ir/                     IR schema and validation
 │   │   ├── schema.py
+│   │   ├── attck_schema.py
 │   │   ├── validator.py
 │   │   ├── ir_to_nl.py
 │   │   └── examples.json
 │   │
-│   ├── translators/
-│   │   ├── base.py
-│   │   ├── field_mapping.py
+│   ├── translators/            per-platform translation
+│   │   ├── elastic.py
+│   │   ├── esql_converter.py   EQL→ES|QL bridge
+│   │   ├── wazuh.py
 │   │   ├── splunk.py
 │   │   ├── qradar.py
-│   │   ├── elastic.py
 │   │   ├── sentinel.py
-│   │   ├── wazuh.py
-│   │   └── esql_converter.py
+│   │   ├── field_mapping.py
+│   │   └── base.py
 │   │
-│   ├── rag/
-│   │   ├── chunker.py
-│   │   ├── embedder.py
-│   │   ├── vector_store.py
+│   ├── connectors/             execution layer
+│   │   ├── elastic_connector.py
+│   │   ├── wazuh_connector.py
+│   │   ├── splunk_connector.py
+│   │   ├── factory.py
+│   │   └── base.py
+│   │
+│   ├── rag/                    local retrieval pipeline
 │   │   ├── retriever.py
+│   │   ├── embedder.py         all-MiniLM-L6-v2
+│   │   ├── vector_store.py     FAISS-backed
+│   │   ├── chunker.py
 │   │   └── ingest.py
 │   │
-│   ├── llm/
-│   │   ├── client.py
-│   │   ├── prompts.py
-│   │   ├── response_parser.py
-│   │   └── token_counter.py
-│   │
-│   ├── evaluation/
+│   ├── evaluation/             benchmarking and scoring
 │   │   ├── syntax_validator.py
 │   │   ├── semantic_scorer.py
-│   │   ├── attack_fidelity.py
+│   │   ├── attck_fidelity_scorer.py
+│   │   ├── attck_coverage_auditor.py
 │   │   ├── execution_match.py
 │   │   ├── error_analyzer.py
 │   │   ├── metrics_aggregator.py
 │   │   └── ablation.py
 │   │
-│   ├── knowledge_base/
+│   ├── knowledge_base/         indexed SIEM + MITRE docs
+│   │   ├── elastic/
+│   │   ├── wazuh/
 │   │   ├── splunk/
 │   │   ├── qradar/
-│   │   ├── elastic/
 │   │   ├── sentinel/
-│   │   ├── wazuh/
 │   │   └── mitre/
+│   │
+│   ├── llm/                    LLM abstraction layer
+│   │   ├── client.py
+│   │   ├── prompts.py
+│   │   ├── response_parser.py
+│   │   └── token_counter.py
 │   │
 │   └── utils/
 │       ├── config.py
@@ -459,84 +513,54 @@ nl-siem/
 │       ├── file_io.py
 │       └── exceptions.py
 │
-├── tests/
-│   └── connectors/
-│
-├── README.md
-├── siem_architecture.svg
-└── test_*.py
+└── tests/
+    └── connectors/
+        ├── test_splunk_connector.py
+        └── test_wazuh_connector.py
 ```
-
-### Directory Overview
-
-| Directory | Purpose |
-|---|---|
-| `src/agents` | Multi-agent orchestration: ATT&CK classification, parsing, validation, refinement, and translation |
-| `src/ir` | Platform-agnostic IR schema with ATT&CK identity as a structural component |
-| `src/translators` | IR → SIEM query translators for Splunk, QRadar, Elastic, Sentinel, and Wazuh |
-| `src/llm` | LLM abstraction layer, prompting framework, response parsing, and token tracking |
-| `src/rag` | Retrieval-Augmented Generation pipeline including embeddings and vector search |
-| `src/evaluation` | Benchmarking, ATT&CK fidelity scoring, ablation studies, and execution-level validation |
-| `src/utils` | Shared utilities: configuration, logging, exceptions, and file operations |
-| `knowledge_base` | SIEM documentation corpus and MITRE ATT&CK knowledge base used for retrieval |
-| `datasets` | SIEMBench benchmark dataset, raw query banks, and processed evaluation artifacts |
-| `experiments` | Experiment configurations, ablation runs, and evaluation outputs |
-| `scripts` | Command-line entry points for dataset generation, evaluation, and benchmarking |
-| `tests` | Unit tests and end-to-end integration tests |
-| `docs` | Architecture diagrams, paper assets, figures, tables, and manuscript drafts |
-
-### Design Philosophy
-
-The system follows a modular, ATT&CK-first research architecture:
-
-```
-Natural Language Query
-  → ATT&CK Classification (tactic · technique · sub-technique)
-  → Retrieval (RAG over platform docs + MITRE knowledge base)
-  → Parser Agent
-  → Intermediate Representation (ATT&CK identity embedded structurally)
-  → Validation
-  → Platform-Specific Translation (5 independent agents)
-  → Evaluation (syntactic · semantic · ATT&CK fidelity · execution match)
-```
-
-The Intermediate Representation acts as the central abstraction layer, decoupling semantic understanding from SIEM-specific query syntax. ATT&CK identity propagates through this layer as a first-class structural property — ensuring that coverage metrics reflect genuine detection capability rather than inherited labels.
 
 ---
 
-## Platform Validation Setup
+## Limitations
 
-| Platform | Validation Method | Setup |
-|---|---|---|
-| Splunk Enterprise | Full execution | Free developer license (local) |
-| Elastic SIEM | Full execution | Docker (`elasticsearch:8.x`) |
-| Wazuh | Full execution | Docker (`wazuh-docker`) |
-| Microsoft Sentinel KQL | Syntax + logic | Azure Data Explorer (free tier) |
-| IBM QRadar AQL | Rule-based syntactic parser | Community Edition VM |
+- EQL sequence constructs are not converted by the current bridge.
+  `ESQLConversionError` is raised explicitly rather than emitting
+  an approximate translation. Sequence support is the next roadmap
+  item.
+- Splunk, QRadar, and Sentinel execution connectors are not yet
+  implemented. Translation agents for these platforms are functional;
+  live execution validation is pending.
+- The RAG retrieval layer uses `all-MiniLM-L6-v2`, a general-purpose
+  encoder not fine-tuned on security text. Techniques with similar
+  surface descriptions are a known misclassification risk.
+- Retrieval hyperparameters (k=5 classifier, k=2 per platform for
+  translators) were set heuristically.
 
 ---
 
-## Target Venues
+## Research
 
-- **RAID** — Research in Attacks, Intrusions and Defenses
-- **IEEE DSC** — IEEE Conference on Dependable and Secure Computing
-- **ACL / EMNLP** — NLP for Cybersecurity Workshop track
-- **arXiv cs.CR** — Preprint (immediate release on Day 20)
+Built at PESU Centre for Information Security, Forensics and Cyber 
+Resilience (C-ISFCR), PES University, Bengaluru.
+
+Companion paper: *Detecting What You Think You Detect: Cross-Platform 
+SIEM Query Generation and ATT&CK Coverage Drift Prevention via 
+Intermediate Representation and Multi-Agent LLMs* — preprint under 
+review.
 
 ---
 
 ## Citation
 
-If you use NL-SIEM or SIEMBench in your work, please cite:
-
 ```bibtex
-@article{nlsiem2025,
-  title   = {NL-SIEM: Cross-Platform SIEM Query Translation via
-             Large Language Models and Intermediate Representation},
-  author  = {Your Name and Supervisor Name},
-  journal = {arXiv preprint arXiv:XXXX.XXXXX},
+@article{bhat2025nlsiem,
+  title   = {Detecting What You Think You Detect: Cross-Platform SIEM
+             Query Generation and ATT\&CK Coverage Drift Prevention
+             via Intermediate Representation and Multi-Agent LLMs},
+  author  = {Bhat, Shubham Dattatraya},
   year    = {2025},
-  url     = {https://arxiv.org/abs/XXXX.XXXXX}
+  note    = {Preprint under review. Research conducted at PESU C-ISFCR,
+             PES University, Bengaluru.}
 }
 ```
 
@@ -551,8 +575,7 @@ Dataset (SIEMBench v1) — [CC BY 4.0](https://creativecommons.org/licenses/by/4
 
 <div align="center">
 <sub>
-  Built as part of a research internship &nbsp;·&nbsp;
-  Preprint on arXiv coming soon &nbsp;·&nbsp;
-  Issues and pull requests welcome
+Built at PESU C-ISFCR · Black Hat Arsenal India 2026 · 
+Issues and PRs welcome
 </sub>
 </div>

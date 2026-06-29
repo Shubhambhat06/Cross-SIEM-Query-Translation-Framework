@@ -85,6 +85,11 @@ NL-SIEM workflow:
 
 ## Architecture
 
+<p align="center">
+  <img src="svg-export-1x.png" width="800">
+  <br>
+  <em>Figure 1: NL-SIEM Multi-Agent Architecture</em>
+</p>
 ```
 Natural Language Query
   │

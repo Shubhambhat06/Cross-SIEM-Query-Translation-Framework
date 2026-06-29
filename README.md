@@ -90,7 +90,7 @@ NL-SIEM workflow:
   <br>
   <em>Figure 1: NL-SIEM Multi-Agent Architecture</em>
 </p>
-```text
+```
 Natural Language Query
   │
   ▼

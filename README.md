@@ -139,7 +139,7 @@ Intermediate Representation
 Execution Agent                  src/agents/execution_agent.py
   Submit · retrieve results · ATT&CK fidelity check
   Elastic + Wazuh: live, validated at PESU C-ISFCR SOC
-
+```
 
 RAG retrieval: six corpora indexed separately under 
 `src/knowledge_base/` — one per platform plus MITRE ATT&CK. Each 

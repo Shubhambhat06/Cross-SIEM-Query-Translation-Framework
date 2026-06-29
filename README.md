@@ -84,7 +84,7 @@ NL-SIEM workflow:
 ---
 
 ## Architecture
-```
+```text
 <p align="center">
   <img src="svg-export-1x.png" width="800">
   <br>

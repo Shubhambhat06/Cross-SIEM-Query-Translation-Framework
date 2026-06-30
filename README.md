@@ -467,7 +467,283 @@ nl-siem/
         ├── test_splunk_connector.py
         └── test_wazuh_connector.py
 ```
-
+## Free-tier LLM support
+ 
+This is a deliberate design constraint, not a fallback. `src/llm/client.py`
+talks to four providers, all usable without a paid API key:
+ 
+| Provider | Free tier | Best model |
+|---|---|---|
+| **Groq** | 30 req/min, 14,400 tokens/min | `llama-3.3-70b-versatile` |
+| **Google Gemini** | 15 req/min, 1M tokens/min (Flash) | `gemini-2.0-flash` |
+| **Ollama** | Unlimited, fully local | `llama3.2` |
+| **OpenRouter** | Aggregated free models | `meta-llama/llama-3.1-70b-instruct:free` |
+ 
+```python
+from src.llm.client import LLMClient
+ 
+# Auto-detect provider from LLM_PROVIDER env var (default: groq)
+client = LLMClient.from_env()
+ 
+# Or explicit
+client = LLMClient(provider="ollama", model="llama3.2")
+```
+ 
+`OLLAMA_HOST` defaults to `http://localhost:11434` for fully offline
+operation. `src/llm/token_counter.py` tracks token usage and estimated
+cost per run across whichever provider is active.
+ 
+---
+ 
+## Installation
+ 
+```bash
+git clone <repository-url>
+cd nl-siem
+ 
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+ 
+pip install -r requirements.txt
+```
+ 
+Minimum required packages (see `requirements.txt` for the full pinned
+list):
+ 
+```
+pydantic>=2.0
+pydantic-settings
+rich
+numpy
+sentence-transformers
+faiss-cpu
+groq            # or: google-generativeai / ollama / openai (for OpenRouter)
+nltk
+rouge-score
+```
+ 
+Configure your provider:
+ 
+```bash
+cp .env.example .env
+```
+ 
+```ini
+# .env — pick ONE provider, leave the others blank
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_key_here
+ 
+# LLM_PROVIDER=gemini
+# GOOGLE_API_KEY=your_key_here
+ 
+# LLM_PROVIDER=ollama
+# OLLAMA_HOST=http://localhost:11434
+ 
+LOG_LEVEL=INFO
+```
+ 
+The RAG embedding pipeline (`src/rag/embedder.py`) runs entirely
+locally via `sentence-transformers` — no embedding API key is ever
+needed.
+ 
+---
+ 
+## Quickstart
+ 
+### One-shot translation
+ 
+```python
+from src.agents.translation_orchestrator import TranslationOrchestrator
+ 
+orc = TranslationOrchestrator.from_env()
+result = orc.translate(
+    "Detect SSH brute force exceeding 50 attempts in 10 minutes"
+)
+ 
+print(result.splunk)
+print(result.qradar)
+print(result.elastic)
+print(result.sentinel)
+print(result.wazuh)
+print(result.summary())
+```
+ 
+### Enable RAG grounding
+ 
+```python
+orc = TranslationOrchestrator.from_env(enable_rag=True)
+result = orc.translate("Detect lateral movement via SMB on port 445")
+```
+ 
+RAG retrieval pulls relevant chunks from your indexed knowledge base
+via `src/rag/retriever.py`, which is backed by a FAISS index built by
+`src/rag/ingest.py`. Populate `knowledge_base/<platform>/*.txt` with
+official SIEM documentation, then run:
+ 
+```python
+from src.rag.ingest import ingest_knowledge_base
+ingest_knowledge_base()   # chunk → embed → index, one-time setup
+```
+ 
+### Batch translation for ablation studies
+ 
+```python
+for condition in ["zero_shot", "few_shot", "rag"]:
+    orc = TranslationOrchestrator.from_env(condition=condition)
+    result = orc.translate(query)
+    save_result(result, condition)
+```
+ 
+### Direct module usage (no orchestrator)
+ 
+```python
+from src.agents.parser_agent import ParserAgent
+from src.translators import translate_one
+from src.llm.client import LLMClient
+ 
+agent = ParserAgent(client=LLMClient.from_env())
+parse_result = agent.parse("Find outbound connections to known bad IPs")
+ 
+spl = translate_one(parse_result.ir, "splunk")
+```
+ 
+---
+ 
+## Project structure
+ 
+This reflects what is implemented today, not a roadmap.
+ 
+```
+nl-siem/
+│
+├── .env.example
+├── requirements.txt
+│
+├── docs/
+│   └── architecture/
+│       └── siem_architecture.svg      five-layer pipeline diagram
+│
+├── knowledge_base/                    SIEM doc corpora for RAG (user-populated)
+│   ├── splunk/
+│   ├── qradar/
+│   ├── elastic/
+│   ├── sentinel/
+│   └── wazuh/
+│
+└── src/
+    ├── utils/                         Layer 0 — foundation
+    │   ├── config.py                  pydantic-settings, env-driven
+    │   ├── logger.py                  structured logging, run-ID tagging
+    │   ├── exceptions.py               NLSIEMError hierarchy
+    │   └── file_io.py                 JSON / JSONL / CSV load-save
+    │
+    ├── ir/                            Layer 1 — Intermediate Representation
+    │   ├── schema.py                  IRQuery Pydantic model (core contribution)
+    │   ├── validator.py               validate_ir() / coerce_ir() / validate_batch()
+    │   ├── ir_to_nl.py                 reverse IR → NL (semantic verification)
+    │   └── examples.json              10 worked IR examples (few-shot source)
+    │
+    ├── translators/                   Layer 2 — per-platform formatters
+    │   ├── base.py                    BaseSIEMTranslator abstract class
+    │   ├── field_mapping.py           canonical field → per-platform field
+    │   ├── splunk.py                  IR → SPL
+    │   ├── qradar.py                  IR → AQL
+    │   ├── elastic.py                 IR → EQL / KQL (auto-routed by query shape)
+    │   ├── sentinel.py                IR → Sentinel KQL
+    │   └── wazuh.py                   IR → Wazuh rule XML
+    │
+    ├── llm/                           Layer 3 — LLM interface
+    │   ├── client.py                  Groq / Gemini / Ollama / OpenRouter wrapper
+    │   ├── prompts.py                 system prompts, few-shot templates
+    │   ├── response_parser.py         JSON extraction from raw LLM output
+    │   └── token_counter.py           token + cost tracking per run
+    │
+    ├── rag/                           Layer 4 — local retrieval-augmented generation
+    │   ├── chunker.py                 sliding-window text chunking
+    │   ├── embedder.py                sentence-transformers (all-MiniLM-L6-v2)
+    │   ├── vector_store.py            FAISS IndexFlatIP, save/load
+    │   ├── retriever.py               embed query → search → format context
+    │   └── ingest.py                  one-time chunk → embed → index pipeline
+    │
+    └── agents/                        Layer 5 — orchestration
+        ├── parser_agent.py            NL → IR (LLM + optional RAG, retry on failure)
+        ├── validator_agent.py         per-platform static syntax validator
+        ├── refinement_agent.py        self-critique re-prompt loop on validation failure
+        └── translation_orchestrator.py main pipeline entry point
+```
+ 
+---
+ 
+## Validation, not execution
+ 
+`src/agents/validator_agent.py` performs **static syntax validation**
+against each of the five platforms — it checks structural correctness
+(required keywords, valid pipe commands, well-formed XML, balanced
+clauses) without connecting to a live SIEM instance. This is what
+currently backs the pipeline's self-correction loop: when validation
+fails, `RefinementAgent` re-prompts the LLM with the specific error
+before giving up.
+ 
+This is an important distinction to be precise about: **syntactic
+validity is not the same claim as execution correctness.** A query can
+pass every structural check in `validator_agent.py` and still fail
+against a real SIEM instance due to schema drift, missing indices, or
+platform version differences. Live execution connectors (an
+Elasticsearch sandbox via Docker, a Wazuh manager deployment target)
+are the natural next step and are not yet part of this repository.
+ 
+---
+ 
+## What is implemented vs. what is planned
+ 
+Being direct about this matters more than the architecture diagram
+looking complete.
+ 
+**Implemented today, in this repo:**
+- Full NL → IR → 5-platform pipeline, callable end-to-end
+- IR schema with Pydantic v2 validation and LLM-output coercion
+  (handles common aliasing mistakes: `"filter_aggregate"` →
+  `"filter+aggregate"`, `"auth"` → `"authentication"`, etc.)
+- All five platform translators, each with platform-specific operator
+  mapping and a static syntax validator
+- Free-tier LLM client supporting four providers with no paid API key
+- Fully local RAG pipeline (chunk → embed → FAISS → retrieve)
+- Self-correcting agent loop: parse → translate → validate → refine
+  on failure
+**Not yet implemented — do not assume these exist:**
+- Live execution connectors against real SIEM instances
+- A published benchmark dataset (SIEMBench or equivalent)
+- Automated test suite (`tests/`)
+- CLI scripts (`scripts/translate_query.py`,
+  `scripts/run_evaluation.py`, etc.) — all usage today is via direct
+  Python import, as shown in Quickstart above
+- ATT&CK tactic/technique auto-classification — `tactic` and
+  `technique_id` are optional IR fields the caller can set manually,
+  not something the pipeline infers
+If you're building on top of this for a CTF, hackathon, or research
+prototype, the honest framing is: *intermediate representation +
+multi-agent translation is built and works; execution-backed
+validation and a published benchmark are the open problems.*
+ 
+---
+ 
+## Adding a new SIEM target
+ 
+Every translator inherits from `BaseSIEMTranslator`
+(`src/translators/base.py`), which provides:
+ 
+- `_resolve(field)` — canonical → platform field name via
+  `field_mapping.py`
+- `_map_op(operator)` — IR comparison operator → platform operator
+  syntax
+- `translate(ir) -> str` — the only method you call externally;
+  wraps your `_translate()` with error handling
+To add a sixth platform, subclass `BaseSIEMTranslator`, implement
+`_translate(self, ir: IRQuery) -> str` and `validate(self, query: str)
+-> bool`, add field mappings to `field_mapping.py`, and register the
+translator wherever `translate_all()` dispatches across platforms.
+ 
+---
 ---
 
 ## Limitations

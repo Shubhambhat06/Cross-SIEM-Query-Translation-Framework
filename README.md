@@ -281,36 +281,288 @@ This is execution-backed validation — not syntax checking.
 
 ---
 
+## Free-tier LLM support
+
+This is a deliberate design constraint, not a fallback. `src/llm/client.py`
+talks to four providers, all usable without a paid API key:
+
+| Provider | Free tier | Best model |
+|---|---|---|
+| **Groq** | 30 req/min, 14,400 tokens/min | `llama-3.3-70b-versatile` |
+| **Google Gemini** | 15 req/min, 1M tokens/min (Flash) | `gemini-2.0-flash` |
+| **Ollama** | Unlimited, fully local | `llama3.2` |
+| **OpenRouter** | Aggregated free models | `meta-llama/llama-3.1-70b-instruct:free` |
+
+```python
+from src.llm.client import LLMClient
+
+# Auto-detect provider from LLM_PROVIDER env var (default: groq)
+client = LLMClient.from_env()
+
+# Or explicit
+client = LLMClient(provider="ollama", model="llama3.2")
+```
+
+`OLLAMA_HOST` defaults to `http://localhost:11434` for fully offline
+operation. `src/llm/token_counter.py` tracks token usage and estimated
+cost per run across whichever provider is active.
+
+---
+
+## Frontend Dashboard
+
+`frontend/` — a React 18 + Vite single-page dashboard that gives analysts
+a UI over the pipeline above, instead of requiring a Python shell for
+every translation.
+
+| Page | What it does | Talks to |
+|---|---|---|
+| Dashboard | Translation volume, platform count, coverage %, connector health at a glance | `GET /stats`, `GET /connectors/status` |
+| Translator | Free-text query in, ATT&CK-mapped IR + per-platform queries out | `POST /translate` |
+| ATT&CK Mapping | Kill-chain heatmap and pipeline diagram for the active translation | derived from the last `/translate` response |
+| Benchmarks | Per-platform accuracy and latency | `GET /benchmarks` |
+| Connectors | Live connection status per platform connector | `GET /connectors/status` |
+| Upload | Drag-and-drop ingestion of log samples to improve translation accuracy | `POST /upload` |
+| Executions | History of pipeline runs, expandable per-run detail | `GET /executions` |
+
+**Stack:** React 18 · Vite · Tailwind CSS v4 · Recharts (benchmarks) ·
+React Flow (pipeline diagram) · React Syntax Highlighter (query output) ·
+React Icons
+
+```
+frontend/
+├── index.html
+├── vite.config.js
+├── package.json
+├── src/
+│   ├── main.jsx
+│   ├── index.css
+│   ├── services/
+│   │   └── api.js              axios client, base URL from VITE_API_URL
+│   └── components/
+│       ├── App.jsx             sidebar/navbar shell + page routing
+│       ├── SideBar.jsx
+│       ├── Navbar.jsx
+│       ├── Dashboard.jsx
+│       ├── StatCards.jsx
+│       ├── QueryTranslator.jsx
+│       ├── QueryCard.jsx
+│       ├── TranslationResults.jsx
+│       ├── History.jsx
+│       ├── AttackMappingPage.jsx
+│       ├── AttackMapping.jsx
+│       ├── AttackHeatmap.jsx
+│       ├── PipelineGraph.jsx
+│       ├── Benchmarks.jsx
+│       ├── BenchmarkChart.jsx
+│       ├── BenchmarkCard.jsx
+│       ├── ConnectorStatus.jsx
+│       ├── ConnectorCard.jsx
+│       ├── Upload.jsx
+│       └── Executions.jsx
+```
+
+---
+
+## Backend API Layer
+
+The dashboard talks to a thin FastAPI layer over `TranslationOrchestrator`
+— it exposes the existing pipeline over HTTP rather than reimplementing
+any of it.
+
+```
+src/api/
+├── server.py          FastAPI app, CORS config, route registration
+├── routes/
+│   ├── translate.py    POST /translate
+│   ├── connectors.py   GET  /connectors/status
+│   ├── benchmarks.py   GET  /benchmarks
+│   ├── uploads.py      POST /upload
+│   └── executions.py   GET  /executions
+└── schemas.py          Pydantic response models shared with the frontend
+```
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/translate` | POST | Runs `TranslationOrchestrator.translate()`; returns `{ success, run_id, ir, translations, error }` |
+| `/connectors/status` | GET | Live/last-known connection state per platform connector |
+| `/benchmarks` | GET | Accuracy/latency figures per platform from `experiments/results/` |
+| `/upload` | POST | Accepts log sample files, queues them for `src/rag/ingest.py` |
+| `/executions` | GET | Recent pipeline run history with status and duration |
+
+Run it with:
+
+```bash
+uvicorn src.api.server:app --reload --port 8000
+```
+
+> Adjust the module path above if your server entrypoint lives elsewhere —
+> this reflects the route shape the frontend already expects, not
+> necessarily an exact file that ships in this repo today.
+
+---
+
 ## Installation
+
+### Prerequisites
+
+- Python 3.10+
+- Node.js 18+ and npm
+- (Optional) [Ollama](https://ollama.com), if you want the LLM to run fully offline
+
+### 1. Clone the repo
 
 ```bash
 git clone https://github.com/Shubhambhat06/nl-siem.git
 cd nl-siem
+```
 
+### 2. Backend setup
+
+```bash
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 
 pip install -r requirements.txt
-
-cp .env.example .env
-# Add your LLM API key:
-# OPENAI_API_KEY=...  or  GOOGLE_API_KEY=...
 ```
 
-The RAG pipeline runs fully locally. No embedding API key needed.
+Minimum required packages (see `requirements.txt` for the full pinned
+list):
+
+```
+pydantic>=2.0
+pydantic-settings
+rich
+numpy
+sentence-transformers
+faiss-cpu
+groq            # or: google-generativeai / ollama / openai (for OpenRouter)
+nltk
+rouge-score
+fastapi
+uvicorn
+```
+
+Configure your LLM provider — pick **one**:
+
+```bash
+cp .env.example .env
+```
+
+```ini
+# .env — pick ONE provider, leave the others blank
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_key_here
+
+# LLM_PROVIDER=gemini
+# GOOGLE_API_KEY=your_key_here
+
+# LLM_PROVIDER=ollama
+# OLLAMA_HOST=http://localhost:11434
+
+LOG_LEVEL=INFO
+```
+
+The RAG embedding pipeline (`src/rag/embedder.py`) runs entirely
+locally via `sentence-transformers` — no embedding API key is ever
+needed.
+
+(Optional) Populate `knowledge_base/<platform>/*.txt` with official SIEM
+docs and build the index before your first run:
+
+```python
+from src.rag.ingest import ingest_knowledge_base
+ingest_knowledge_base()   # chunk → embed → index, one-time setup
+```
+
+### 3. Start the backend
+
+```bash
+uvicorn src.api.server:app --reload --port 8000
+```
+
+### 4. Frontend setup
+
+In a separate terminal:
+
+```bash
+cd frontend
+npm install
+```
+
+Point the frontend at your backend (defaults to `http://localhost:8000`):
+
+```bash
+cp .env.example .env
+```
+
+```ini
+VITE_API_URL=http://localhost:8000
+```
+
+```bash
+npm run dev
+```
+
+Open `http://localhost:5173` — the dashboard should load, and Connectors
+should show live status once the backend is reachable.
 
 ---
 
 ## Quickstart
 
-```bash
-# Ingest knowledge base (first time only)
-python scripts/ingest_knowledge_base.py
+### From the dashboard
 
-# Translate a query
-python scripts/translate_query.py \
-  --query "Detect repeated failed SSH logins from the same IP" \
-  --platforms elastic wazuh splunk
+Open the **Translator** tab, describe a detection in plain language, and
+hit **Translate** (or ⌘/Ctrl + Enter). The ATT&CK mapping, IR, and
+per-platform queries appear below, and the run is pinned to **ATT&CK
+Mapping** and **Executions** automatically.
+
+### From Python
+
+```python
+from src.agents.translation_orchestrator import TranslationOrchestrator
+
+orc = TranslationOrchestrator.from_env()
+result = orc.translate(
+    "Detect SSH brute force exceeding 50 attempts in 10 minutes"
+)
+
+print(result.splunk)
+print(result.qradar)
+print(result.elastic)
+print(result.sentinel)
+print(result.wazuh)
+print(result.summary())
+```
+
+### Enable RAG grounding
+
+```python
+orc = TranslationOrchestrator.from_env(enable_rag=True)
+result = orc.translate("Detect lateral movement via SMB on port 445")
+```
+
+### Batch translation for ablation studies
+
+```python
+for condition in ["zero_shot", "few_shot", "rag"]:
+    orc = TranslationOrchestrator.from_env(condition=condition)
+    result = orc.translate(query)
+    save_result(result, condition)
+```
+
+### Direct module usage (no orchestrator)
+
+```python
+from src.agents.parser_agent import ParserAgent
+from src.translators import translate_one
+from src.llm.client import LLMClient
+
+agent = ParserAgent(client=LLMClient.from_env())
+parse_result = agent.parse("Find outbound connections to known bad IPs")
+
+spl = translate_one(parse_result.ir, "splunk")
 ```
 
 ---
@@ -467,152 +719,13 @@ nl-siem/
         ├── test_splunk_connector.py
         └── test_wazuh_connector.py
 ```
-## Free-tier LLM support
- 
-This is a deliberate design constraint, not a fallback. `src/llm/client.py`
-talks to four providers, all usable without a paid API key:
- 
-| Provider | Free tier | Best model |
-|---|---|---|
-| **Groq** | 30 req/min, 14,400 tokens/min | `llama-3.3-70b-versatile` |
-| **Google Gemini** | 15 req/min, 1M tokens/min (Flash) | `gemini-2.0-flash` |
-| **Ollama** | Unlimited, fully local | `llama3.2` |
-| **OpenRouter** | Aggregated free models | `meta-llama/llama-3.1-70b-instruct:free` |
- 
-```python
-from src.llm.client import LLMClient
- 
-# Auto-detect provider from LLM_PROVIDER env var (default: groq)
-client = LLMClient.from_env()
- 
-# Or explicit
-client = LLMClient(provider="ollama", model="llama3.2")
-```
- 
-`OLLAMA_HOST` defaults to `http://localhost:11434` for fully offline
-operation. `src/llm/token_counter.py` tracks token usage and estimated
-cost per run across whichever provider is active.
- 
+
 ---
- 
-## Installation
- 
-```bash
-git clone <repository-url>
-cd nl-siem
- 
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
- 
-pip install -r requirements.txt
-```
- 
-Minimum required packages (see `requirements.txt` for the full pinned
-list):
- 
-```
-pydantic>=2.0
-pydantic-settings
-rich
-numpy
-sentence-transformers
-faiss-cpu
-groq            # or: google-generativeai / ollama / openai (for OpenRouter)
-nltk
-rouge-score
-```
- 
-Configure your provider:
- 
-```bash
-cp .env.example .env
-```
- 
-```ini
-# .env — pick ONE provider, leave the others blank
-LLM_PROVIDER=groq
-GROQ_API_KEY=your_key_here
- 
-# LLM_PROVIDER=gemini
-# GOOGLE_API_KEY=your_key_here
- 
-# LLM_PROVIDER=ollama
-# OLLAMA_HOST=http://localhost:11434
- 
-LOG_LEVEL=INFO
-```
- 
-The RAG embedding pipeline (`src/rag/embedder.py`) runs entirely
-locally via `sentence-transformers` — no embedding API key is ever
-needed.
- 
----
- 
-## Quickstart
- 
-### One-shot translation
- 
-```python
-from src.agents.translation_orchestrator import TranslationOrchestrator
- 
-orc = TranslationOrchestrator.from_env()
-result = orc.translate(
-    "Detect SSH brute force exceeding 50 attempts in 10 minutes"
-)
- 
-print(result.splunk)
-print(result.qradar)
-print(result.elastic)
-print(result.sentinel)
-print(result.wazuh)
-print(result.summary())
-```
- 
-### Enable RAG grounding
- 
-```python
-orc = TranslationOrchestrator.from_env(enable_rag=True)
-result = orc.translate("Detect lateral movement via SMB on port 445")
-```
- 
-RAG retrieval pulls relevant chunks from your indexed knowledge base
-via `src/rag/retriever.py`, which is backed by a FAISS index built by
-`src/rag/ingest.py`. Populate `knowledge_base/<platform>/*.txt` with
-official SIEM documentation, then run:
- 
-```python
-from src.rag.ingest import ingest_knowledge_base
-ingest_knowledge_base()   # chunk → embed → index, one-time setup
-```
- 
-### Batch translation for ablation studies
- 
-```python
-for condition in ["zero_shot", "few_shot", "rag"]:
-    orc = TranslationOrchestrator.from_env(condition=condition)
-    result = orc.translate(query)
-    save_result(result, condition)
-```
- 
-### Direct module usage (no orchestrator)
- 
-```python
-from src.agents.parser_agent import ParserAgent
-from src.translators import translate_one
-from src.llm.client import LLMClient
- 
-agent = ParserAgent(client=LLMClient.from_env())
-parse_result = agent.parse("Find outbound connections to known bad IPs")
- 
-spl = translate_one(parse_result.ir, "splunk")
-```
- 
----
- 
+
 ## Project structure
- 
+
 This reflects what is implemented today, not a roadmap.
- 
+
 ```
 nl-siem/
 │
@@ -623,6 +736,8 @@ nl-siem/
 │   └── architecture/
 │       └── siem_architecture.svg      five-layer pipeline diagram
 │
+├── frontend/                          React + Vite dashboard (see above)
+│
 ├── knowledge_base/                    SIEM doc corpora for RAG (user-populated)
 │   ├── splunk/
 │   ├── qradar/
@@ -631,6 +746,8 @@ nl-siem/
 │   └── wazuh/
 │
 └── src/
+    ├── api/                           REST layer over the orchestrator (see above)
+    │
     ├── utils/                         Layer 0 — foundation
     │   ├── config.py                  pydantic-settings, env-driven
     │   ├── logger.py                  structured logging, run-ID tagging
@@ -671,11 +788,11 @@ nl-siem/
         ├── refinement_agent.py        self-critique re-prompt loop on validation failure
         └── translation_orchestrator.py main pipeline entry point
 ```
- 
+
 ---
- 
+
 ## Validation, not execution
- 
+
 `src/agents/validator_agent.py` performs **static syntax validation**
 against each of the five platforms — it checks structural correctness
 (required keywords, valid pipe commands, well-formed XML, balanced
@@ -683,7 +800,7 @@ clauses) without connecting to a live SIEM instance. This is what
 currently backs the pipeline's self-correction loop: when validation
 fails, `RefinementAgent` re-prompts the LLM with the specific error
 before giving up.
- 
+
 This is an important distinction to be precise about: **syntactic
 validity is not the same claim as execution correctness.** A query can
 pass every structural check in `validator_agent.py` and still fail
@@ -691,14 +808,14 @@ against a real SIEM instance due to schema drift, missing indices, or
 platform version differences. Live execution connectors (an
 Elasticsearch sandbox via Docker, a Wazuh manager deployment target)
 are the natural next step and are not yet part of this repository.
- 
+
 ---
- 
+
 ## What is implemented vs. what is planned
- 
+
 Being direct about this matters more than the architecture diagram
 looking complete.
- 
+
 **Implemented today, in this repo:**
 - Full NL → IR → 5-platform pipeline, callable end-to-end
 - IR schema with Pydantic v2 validation and LLM-output coercion
@@ -710,6 +827,8 @@ looking complete.
 - Fully local RAG pipeline (chunk → embed → FAISS → retrieve)
 - Self-correcting agent loop: parse → translate → validate → refine
   on failure
+- React + Vite dashboard for the pipeline above
+
 **Not yet implemented — do not assume these exist:**
 - Live execution connectors against real SIEM instances
 - A published benchmark dataset (SIEMBench or equivalent)
@@ -720,30 +839,33 @@ looking complete.
 - ATT&CK tactic/technique auto-classification — `tactic` and
   `technique_id` are optional IR fields the caller can set manually,
   not something the pipeline infers
+- The `src/api/` FastAPI layer the frontend expects — the route shapes
+  above describe what the dashboard calls, not confirmed shipped code
+
 If you're building on top of this for a CTF, hackathon, or research
 prototype, the honest framing is: *intermediate representation +
 multi-agent translation is built and works; execution-backed
 validation and a published benchmark are the open problems.*
- 
+
 ---
- 
+
 ## Adding a new SIEM target
- 
+
 Every translator inherits from `BaseSIEMTranslator`
 (`src/translators/base.py`), which provides:
- 
+
 - `_resolve(field)` — canonical → platform field name via
   `field_mapping.py`
 - `_map_op(operator)` — IR comparison operator → platform operator
   syntax
 - `translate(ir) -> str` — the only method you call externally;
   wraps your `_translate()` with error handling
+
 To add a sixth platform, subclass `BaseSIEMTranslator`, implement
 `_translate(self, ir: IRQuery) -> str` and `validate(self, query: str)
 -> bool`, add field mappings to `field_mapping.py`, and register the
 translator wherever `translate_all()` dispatches across platforms.
- 
----
+
 ---
 
 ## Limitations

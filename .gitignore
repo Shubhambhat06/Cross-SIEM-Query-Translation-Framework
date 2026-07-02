@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Vite
+.vite/
+
+# Logs
+*.log
+
+# Generated data
+generated_rules/
+data/
+experiments/
+
+# FAISS
+src/rag/store.faiss
+src/rag/store_metadata.json
+src/rag/ingest_manifest.json
+
+# OS files
+.DS_Store

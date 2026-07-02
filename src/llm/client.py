@@ -11,7 +11,7 @@ Provider routing:
 Set in .env:
     LLM_PROVIDER=groq
     GROQ_API_KEY=gsk_...
-    LLM_MODEL=qwen/qwen3-32b
+    LLM_MODEL=llama-3.3-70b-versatile
     OLLAMA_HOST=http://localhost:11434   # optional override
 
 Place at: src/llm/client.py
@@ -55,7 +55,7 @@ log = get_logger(__name__)
 PROVIDER_CONFIGS: dict[str, dict] = {
     "groq": {
         "base_url":       "https://api.groq.com/openai/v1",
-        "default_model":  "qwen/qwen3-32b",
+        "default_model":  "llama-3.3-70b-versatile",
         "key_env":        "GROQ_API_KEY",
         "rate_limit_rpm": 30,    # free tier: 30 req/min; 14,400 tokens/min
         "rate_limit_tpm": 14_400,

@@ -64,6 +64,7 @@ from src.translators import translate_all
 from src.utils.exceptions import NLSIEMError, TranslationError
 from src.utils.logger import get_logger
 from src.agents.execution_agent import ExecutionAgent, ExecutionResult
+from src.agents.attck_classifier_agent import ATTCKClassifierAgent
 log = get_logger(__name__)
 from src.agents.rule_deployment_agent import (
     RuleDeploymentAgent
@@ -298,6 +299,9 @@ class TranslationOrchestrator:
         self.rule_deployment_agent = (
             RuleDeploymentAgent()
         )
+        self.attck_classifier = ATTCKClassifierAgent(
+        client=self.parser_agent.client
+        )
         log.info(
             "TranslationOrchestrator initialised",
             extra={
@@ -471,7 +475,27 @@ class TranslationOrchestrator:
         parse_result = self.parser_agent.parse(nl_query)
         ir           = parse_result.ir
         warnings.extend(parse_result.warnings)
+        try:
+            attack_result = self.attck_classifier.classify(
+                nl_query
+            )
 
+            ir.tactic = attack_result.tactic
+            ir.technique_id = attack_result.technique
+
+            log.info(
+                "ATT&CK classification complete",
+                extra={
+                    "tactic": attack_result.tactic,
+                    "technique": attack_result.technique,
+                    "confidence": attack_result.confidence,
+                },
+            )
+
+        except Exception as exc:
+            warnings.append(
+                f"ATT&CK classification failed: {exc}"
+            )
         log.info(
             "IR parsed",
             extra={

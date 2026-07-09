@@ -66,10 +66,25 @@ class QRadarTranslator(BaseSIEMTranslator):
         lines.append("FROM events")
 
         # ── WHERE ─────────────────────────────────────────────────────────
-        if ir.filter:
-            where_str = self._build_where(ir.filter)
-            if where_str:
-                lines.append(f"WHERE {where_str}")
+        where_str = self._build_where(ir.filter) if ir.filter else ""
+        lookup_clause = ""
+        if ir.lookup:
+            # (fixed) _build_lookup() existed but was never called from
+            # _translate(), so any detection with action=lookup silently
+            # produced a QRadar query with no lookup/enrichment logic at
+            # all — the ir.lookup spec was dropped on the floor while
+            # every other translator (Splunk, Elastic, Sentinel) honored
+            # it. Append as an additional AND'd condition on WHERE.
+            lookup_clause = self._build_lookup(ir.lookup)
+
+        if where_str and lookup_clause:
+            lines.append(f"WHERE {where_str} {lookup_clause}")
+        elif where_str:
+            lines.append(f"WHERE {where_str}")
+        elif lookup_clause:
+            # lookup_clause starts with "AND ..." — strip the leading
+            # AND when it's the only WHERE condition present.
+            lines.append(f"WHERE {lookup_clause[4:]}")
 
         # ── GROUP BY ──────────────────────────────────────────────────────
         if self._requires_aggregation(ir) and ir.aggregation and ir.aggregation.group_by:
@@ -96,6 +111,17 @@ class QRadarTranslator(BaseSIEMTranslator):
         # ── TIME (always last in AQL) ──────────────────────────────────────
         if ir.time_window:
             lines.append(ir.time_window.to_aql)
+
+        # ── MITRE ATT&CK provenance ──────────────────────────────────────
+        # (fixed) QRadar was the only one of the five translators that
+        # never surfaced the ATT&CK label anywhere in its output — Splunk
+        # uses `eval`, Sentinel uses `extend`, Wazuh uses <mitre>, Elastic
+        # uses a trailing comment. AQL has no clean way to inject a
+        # synthetic constant column outside SELECT, so a trailing comment
+        # is the least surprising option (consistent with Elastic's KQL
+        # path for the same reason).
+        if ir.attck_labels:
+            lines.append(f"-- MITRE ATT&CK: {', '.join(ir.attck_labels)}")
 
         return "\n".join(lines)
 

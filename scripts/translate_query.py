@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """
 scripts/translate_query.py
 ===========================
@@ -55,6 +56,15 @@ from src.agents.parser_agent import ParserAgent
 from src.llm.client import LLMClient
 from src.utils.logger import get_logger
 
+RESET   = "\033[0m"
+BLACK   = "\033[30m"
+RED     = "\033[31m"
+GREEN   = "\033[32m"
+YELLOW  = "\033[33m"
+BLUE    = "\033[34m"
+MAGENTA = "\033[35m"
+CYAN    = "\033[36m"
+WHITE   = "\033[37m"
 log = get_logger("translate_query")
 
 PLATFORMS = ("splunk", "qradar", "elastic", "sentinel", "wazuh")
@@ -99,25 +109,38 @@ def _print_rag_context(context: str) -> None:
 
 def _print_translations(translations: dict[str, str], validate: bool = True) -> None:
     print(_c("\n── Translations ───────────────────────────────────────", BOLD))
-    for platform, query in translations.items():
-        if not query:
-            label = _c(f"[{platform.upper():>8}]", RED)
-            print(f"{label}  (no output)")
-            continue
-        label = _c(f"[{platform.upper():>8}]", CYAN)
-        print(f"\n{label}")
+    for platform, payload in translations.items():
+        query = payload["query"]
+        attck = payload["attck"]
+
+        print(
+            _c(
+                f"\n── {platform.upper()} ─────────────────────────────────",
+                CYAN,
+            )
+        )
+
         print(query)
+
+        if attck:
+            print(
+                _c(
+                    f"\nMITRE ATT&CK: {', '.join(attck)}",
+                    MAGENTA,
+                )
+            )
 
     if validate:
         _print_validation(translations)
 
-def _print_validation(translations: dict[str, str]) -> None:
+def _print_validation(translations: dict[str, dict]) -> None:
     try:
         from src.evaluation.syntax_validator import SyntaxValidator
         v = SyntaxValidator()
         print(_c("\n── Syntax Validation ──────────────────────────────────", DIM))
         all_valid = True
-        for platform, query in translations.items():
+        for platform, payload in translations.items():
+            query = payload["query"]
             result = v.validate(platform, query or "")
             status = _c("PASS", GREEN) if result.is_valid else _c("FAIL", RED)
             detail = f"  [{result.error_type}]" if not result.is_valid else ""

@@ -66,7 +66,6 @@ class SplunkTranslator(BaseSIEMTranslator):
         # ── Sequence (transaction command) ────────────────────────────────
         if ir.action == ActionType.SEQUENCE and ir.sequence:
             parts.append(self._build_sequence(ir.sequence))
-            return "\n| ".join(p for p in parts if p)
 
         # ── Lookup ────────────────────────────────────────────────────────
         if ir.lookup:
@@ -79,6 +78,17 @@ class SplunkTranslator(BaseSIEMTranslator):
         # ── Threshold (where) ─────────────────────────────────────────────
         if ir.threshold:
             parts.append(self._build_where(ir.threshold))
+
+        # ── MITRE ATT&CK provenance ──────────────────────────────────────
+        # (fixed) previously this block did `return` immediately after
+        # appending, before aggregation/threshold/sort/limit/table were
+        # ever built. Since ir.attck_labels is REQUIRED and non-empty on
+        # every valid IRQuery (see schema.py), that early return fired on
+        # every single translation — silently dropping the rest of the
+        # pipeline from every Splunk query this translator ever produced.
+        if ir.attck_labels:
+            labels = ",".join(ir.attck_labels)
+            parts.append(f'eval MITRETechniques="{labels}"')
 
         # ── Sort ──────────────────────────────────────────────────────────
         if ir.sort_by:

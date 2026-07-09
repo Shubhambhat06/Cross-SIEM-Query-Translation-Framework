@@ -28,6 +28,18 @@ same decoupling principle as the NL→IR vs. IR→SIEM-syntax boundary that is
 the framework's core contribution: each agent owns exactly one inference
 task and is independently testable, swappable, and auditable.
 
+Multi-technique classification
+-------------------------------
+A single detection description often genuinely maps to more than one
+ATT&CK technique — e.g. repeated failed SSH logins from one IP is password
+guessing (T1110.001), but could also be password spraying (T1110.003) if
+the target accounts vary. classify() below still collapses to one best
+match for callers that only want that. classify_multi() runs the identical
+taxonomy-grounded pipeline (same candidate narrowing, same mandatory
+taxonomy verification, same hallucination guarantee) but keeps every
+technique that clears verification, ranked by confidence, instead of
+discarding all but the top one.
+
 Place at: src/agents/attck_classifier_agent.py
 
 Usage:
@@ -41,12 +53,20 @@ Usage:
 
     # Attach to an already-parsed IR
     attck_ir = classifier.attach(base_ir, result)
+
+    # Multi-technique variant — every plausible technique, ranked
+    results = classifier.classify_multi(
+        "Detect more than 50 failed SSH logins from the same source IP in 24h"
+    )
+    for r in results:
+        print(r.technique, r.sub_technique, r.confidence, r.rationale)
+
+    # Attach every matched technique to the same base IR
+    attck_irs = classifier.attach_multi(base_ir, results)
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field as dc_field
 import re
-import json
 import time
 from dataclasses import dataclass, field
 
@@ -61,18 +81,57 @@ from src.utils.exceptions import IRValidationError, LLMError, NLSIEMError
 from src.utils.logger import get_logger
 
 log = get_logger(__name__)
+
 # ── Heuristic rule engine ─────────────────────────────────────────────────
-# Research-grade replacement for boolean if/else keyword matching.
-# Each rule requires evidence from multiple independent signal groups,
-# preventing single-keyword false positives. Scores accumulate across
-# groups; require_all=True enforces strict AND across all groups.
-# Only results above _HEURISTIC_THRESHOLD are returned — everything
-# else falls through to taxonomy-grounded LLM chain-of-thought reasoning.
+# Fast-path keyword/regex matching, used only to short-circuit the LLM call
+# for high-confidence cases. Every heuristic hit is now taxonomy-verified
+# before being returned (see _verify_binding() and its use in
+# _run_heuristics() / _run_heuristics_multi() below) — a hardcoded rule
+# with an incorrect tactic/technique/sub-technique triple can no longer
+# silently ship to output. It falls through to the LLM instead, exactly
+# like a genuinely unmatched query would.
+#
+# Confidence-floor design: each _Rule has its own min_score, which governs
+# whether the rule fires AT ALL (see _Rule.score()). That is a per-rule
+# "is there enough signal to even consider this a candidate" gate — it is
+# NOT the same thing as "confident enough to skip the more accurate LLM
+# chain-of-thought stage entirely". Those are two different questions.
+# _HEURISTIC_BYPASS_FLOOR below answers the second one, and is enforced
+# globally in _run_heuristics(), independent of each rule's own min_score.
+# A rule that clears its own min_score at, say, 0.5 still routes through
+# to full LLM reasoning unless the total also clears the bypass floor.
 
-import re
-from dataclasses import dataclass as _dc, field as _f
+from dataclasses import dataclass as _dc
 
-_HEURISTIC_THRESHOLD = 0.85   # minimum score to bypass LLM stage
+# Global safety floor for bypassing the LLM entirely on the classify()
+# fast path. Distinct from — and stricter than — any individual rule's
+# min_score. A rule can legitimately fire (i.e. be considered a match)
+# at a lower score and still be surfaced as a heuristic candidate inside
+# classify_multi()'s merge step, but only a match at or above this floor
+# is trusted enough to skip taxonomy-grounded LLM reasoning altogether.
+_HEURISTIC_BYPASS_FLOOR = 0.85
+
+# Minimum score for a heuristic hit to be considered at all when merging
+# into classify_multi()'s ranked result. Prevents weak single-keyword
+# matches (e.g. a rule that fires at its own min_score of 0.5) from
+# padding the multi-technique output with noise the LLM itself did not
+# surface.
+_HEURISTIC_MERGE_FLOOR = 0.6
+
+# Hedge / negation phrases that indicate the surrounding trigger words are
+# describing normal, authorized, or already-mitigated activity rather than
+# an actual detection target (e.g. "alert only on failed logins, not
+# successful ones" still contains "failed", but the analyst's intent may
+# be more nuanced than the keyword suggests). Presence of any of these
+# halves a heuristic rule's score, pushing borderline matches below the
+# bypass floor and toward full LLM reasoning rather than a fast, literal,
+# keyword-only judgement.
+_HEDGE_PATTERNS = [
+    r"\bsuccessful\b", r"\bauthorized\b", r"\blegitimate\b",
+    r"\bbaseline\b", r"\ballow.?list", r"\bknown\s+good\b",
+    r"\bexpected\b", r"\bfalse\s+positive\b", r"\bnot\s+a\b",
+    r"\bexclud(e|ing)\b", r"\bwhitelist",
+]
 
 
 @_dc
@@ -91,6 +150,16 @@ class _Rule:
         Returns 0.0 if rule does not fire, else clamped accumulated score.
         require_all=True: every group must match (strict AND).
         require_all=False: sum weights of matching groups, check vs min_score.
+
+        A non-zero return value means this rule's own min_score bar was
+        cleared — it does NOT mean the result is confident enough to skip
+        LLM reasoning. That is a separate, stricter check applied by
+        callers (see _HEURISTIC_BYPASS_FLOOR).
+
+        Hedge/negation context (see _HEDGE_PATTERNS) halves the score
+        before the min_score comparison, so a query like "alert on
+        anything except successful, authorized logins" is less likely to
+        be treated as a confident brute-force match on "failed" alone.
         """
         total = 0.0
         for weight, patterns in self.signal_groups:
@@ -99,7 +168,16 @@ class _Rule:
                 total += weight
             elif self.require_all:
                 return 0.0          # one miss kills the rule in strict mode
-        return min(total, 1.0) if total >= self.min_score else 0.0
+
+        if total < self.min_score:
+            return 0.0
+
+        if any(re.search(p, q) for p in _HEDGE_PATTERNS):
+            total *= 0.5
+            if total < self.min_score:
+                return 0.0
+
+        return min(total, 1.0)
 
 
 _RULES: list[_Rule] = [
@@ -110,7 +188,14 @@ _RULES: list[_Rule] = [
           "SSH/RDP/SMB repeated authentication failures — password guessing.",
           [(0.5, [r"\bssh\b", r"\brdp\b", r"\bsmb\b",
                   r"\bftp\b", r"\bwinrm\b"]),
-           (0.5, [r"failed.*(login|logon|auth)*", r"brute.?force",
+           # NOTE (fixed): the trailing `*` on the login/logon/auth group
+           # made that group optional, so the pattern effectively reduced
+           # to `failed.*` — matching "failed" followed by ANYTHING, with
+           # no requirement that an authentication-related word appear at
+           # all (e.g. "SSH connection failed to establish" would match).
+           # Removed the `*` so the group is mandatory, as originally
+           # intended.
+           (0.5, [r"failed.*(login|logon|auth)", r"brute.?force",
                   r"password.?guess", r"\b4625\b", r"\b4771\b"])],
           require_all=True),
 
@@ -128,15 +213,16 @@ _RULES: list[_Rule] = [
 
     _Rule("credential-access", "T1558", "T1558.003",
           "Kerberoasting: RC4 TGS-REQ for service accounts.",
-          [(0.6, [r"kerberoast", r"tgs.?req", r"rc4", r"0x17", r"\b4769\b"]),
-           (0.4, [r"service\s+account", r"\bspn\b", r"kerberos"])],
-          min_score=0.6),
+          [(0.6, [r"kerberoast"]),
+           (0.4, [r"tgs.?req", r"rc4", r"0x17", r"\b4769\b",
+                  r"service\s+account", r"\bspn\b"])],
+          require_all=True),
 
     _Rule("credential-access", "T1558", "T1558.004",
           "AS-REP roasting: pre-authentication disabled accounts.",
-          [(0.7, [r"as.?rep", r"asrep", r"\b4768\b"]),
-           (0.3, [r"pre.?auth", r"roast", r"kerberos"])],
-          min_score=0.7),
+          [(0.6, [r"as.?rep", r"asrep"]),
+           (0.4, [r"pre.?auth", r"roast", r"\b4768\b"])],
+          require_all=True),
 
     _Rule("credential-access", "T1003", "T1003.001",
           "LSASS memory dump for credential extraction.",
@@ -164,7 +250,7 @@ _RULES: list[_Rule] = [
           [(0.6, [r"169\.254\.169\.254", r"\bimds\b",
                   r"metadata\s+service", r"instance\s+metadata"]),
            (0.4, [r"credential", r"token", r"iam\s+role", r"ssrf"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Execution ─────────────────────────────────────────────────────────
 
@@ -174,7 +260,7 @@ _RULES: list[_Rule] = [
            (0.5, [r"encoded.?command", r"\-enc\b", r"downloadstring",
                   r"invoke.?expression", r"\biex\b", r"bypass",
                   r"webclient", r"downloadfile"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("execution", "T1059", "T1059.003",
           "Windows Command Shell spawned from suspicious parent.",
@@ -182,7 +268,7 @@ _RULES: list[_Rule] = [
            (0.5, [r"spawned", r"child\s+process",
                   r"parent.{0,20}(svchost|office|winword|excel|outlook)",
                   r"suspicious\s+parent"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("execution", "T1059", "T1059.004",
           "Unix shell reverse shell or suspicious bash execution.",
@@ -196,31 +282,40 @@ _RULES: list[_Rule] = [
           [(0.6, [r"\bwmic\b", r"\bwmi\b", r"win32_process"]),
            (0.4, [r"process\s+call\s+create", r"remote",
                   r"lateral", r"execut"])],
-          min_score=0.6),
+          require_all=True),
 
-    _Rule("execution", "T1218", "T1218.010",
+    # NOTE (fixed): T1218 "System Binary Proxy Execution" and all of its
+    # sub-techniques (including .010 regsvr32, .011 rundll32, .005 mshta,
+    # .004 installutil/msiexec) belong to the Defense Evasion tactic in
+    # MITRE ATT&CK, not Execution. Verified against attack.mitre.org.
+    # Also switched to require_all=True: a bare mention of "regsvr32" or
+    # "rundll32" alone (both extremely common in legitimate admin/software
+    # activity) was previously enough to fire these rules on its own,
+    # since the first signal group's weight matched min_score exactly.
+
+    _Rule("defense-evasion", "T1218", "T1218.010",
           "Regsvr32 Squiblydoo — remote scriptlet execution.",
           [(0.7, [r"regsvr32"]),
            (0.3, [r"scrobj", r"https?://", r"\.sct\b", r"squiblydoo"])],
-          min_score=0.7),
+          require_all=True),
 
-    _Rule("execution", "T1218", "T1218.011",
+    _Rule("defense-evasion", "T1218", "T1218.011",
           "Rundll32 LOLBin abuse from writable directory.",
           [(0.7, [r"rundll32"]),
            (0.3, [r"temp", r"appdata", r"http", r"shell32", r"advpack"])],
-          min_score=0.7),
+          require_all=True),
 
-    _Rule("execution", "T1218", "T1218.005",
+    _Rule("defense-evasion", "T1218", "T1218.005",
           "MSHTA executing remote HTA payload.",
           [(0.8, [r"\bmshta\b"]),
            (0.2, [r"https?://", r"\.hta\b", r"remote"])],
-          min_score=0.8),
+          require_all=True),
 
-    _Rule("execution", "T1218", "T1218.004",
+    _Rule("defense-evasion", "T1218", "T1218.004",
           "InstallUtil / msiexec LOLBin execution.",
           [(0.7, [r"\bmsiexec\b", r"installutil"]),
            (0.3, [r"/q\b", r"/i\b", r"unc", r"https?://", r"silent"])],
-          min_score=0.7),
+          require_all=True),
 
     # ── Persistence ───────────────────────────────────────────────────────
 
@@ -229,7 +324,7 @@ _RULES: list[_Rule] = [
           [(0.6, [r"run\s*key", r"runonce", r"hkcu.{0,10}run",
                   r"hklm.{0,10}run", r"currentversion\\run"]),
            (0.4, [r"persist", r"startup", r"autorun", r"boot"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("persistence", "T1053", "T1053.005",
           "Scheduled task creation for persistence.",
@@ -237,30 +332,34 @@ _RULES: list[_Rule] = [
                   r"task\s+schedul", r"\b4698\b"]),
            (0.4, [r"persist", r"creat", r"new\s+task",
                   r"writable", r"appdata", r"temp"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("persistence", "T1543", "T1543.003",
           "New Windows service installed for persistence.",
           [(0.6, [r"new\s+service", r"service\s+install",
                   r"\b7045\b", r"sc\s+create"]),
            (0.4, [r"persist", r"temp", r"appdata", r"unc"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("persistence", "T1546", "T1546.003",
           "WMI event subscription persistence.",
           [(0.7, [r"wmi.{0,10}subscri", r"__eventfilter",
                   r"__eventconsumer", r"filtertoconsumerbinding"]),
            (0.3, [r"persist", r"wmi", r"event"])],
-          min_score=0.7),
+          require_all=True),
 
     _Rule("persistence", "T1546", "T1546.012",
           "Image File Execution Options (IFEO) debugger hijack.",
           [(0.8, [r"ifeo", r"image\s+file\s+execution",
                   r"globalflag", r"silentprocessexit"]),
            (0.2, [r"debugger", r"hijack", r"persist"])],
-          min_score=0.8),
+          require_all=True),
 
-    _Rule("persistence", "T1098", None,
+    # NOTE (fixed): this is specifically Account Manipulation: SSH
+    # Authorized Keys, MITRE sub-technique T1098.004, not the bare parent
+    # T1098. Left sub_technique as None before, which discarded the exact
+    # match the query text was already describing.
+    _Rule("persistence", "T1098", "T1098.004",
           "SSH authorized_keys modification.",
           [(0.6, [r"authorized.?keys", r"\.ssh/", r"ssh.{0,10}key"]),
            (0.4, [r"added", r"written", r"modif", r"new\s+entry"])],
@@ -271,7 +370,7 @@ _RULES: list[_Rule] = [
           [(0.6, [r"new\s+(local\s+)?account", r"user\s+creat",
                   r"\b4720\b", r"net\s+user.{0,20}/add"]),
            (0.4, [r"persist", r"local", r"admin", r"backdoor"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Privilege Escalation ──────────────────────────────────────────────
 
@@ -280,7 +379,7 @@ _RULES: list[_Rule] = [
           [(0.7, [r"uac\s+bypass", r"fodhelper", r"eventvwr",
                   r"ms-settings.{0,20}shell.{0,20}open"]),
            (0.3, [r"bypass", r"elevat", r"admin"])],
-          min_score=0.7),
+          require_all=True),
 
     _Rule("privilege-escalation", "T1134", "T1134.001",
           "Token impersonation / SeImpersonatePrivilege abuse.",
@@ -288,7 +387,7 @@ _RULES: list[_Rule] = [
                   r"impersonateloggedonuser", r"duplicatetokenex",
                   r"printspoofer", r"juicypotato", r"rottenpotato"]),
            (0.4, [r"privilege", r"elevat", r"impersonat"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("privilege-escalation", "T1078", None,
           "Domain Admin or local admin group membership change.",
@@ -303,16 +402,16 @@ _RULES: list[_Rule] = [
           [(0.7, [r"gpo\s+modif", r"group\s+policy.{0,20}modif",
                   r"logon\s+script", r"immediate\s+task"]),
            (0.3, [r"high.?value\s+ou", r"domain", r"privilege"])],
-          min_score=0.7),
+          require_all=True),
 
     # ── Defense Evasion ───────────────────────────────────────────────────
 
     _Rule("defense-evasion", "T1070", "T1070.001",
           "Windows event log cleared.",
           [(0.7, [r"event\s+log.{0,10}clear", r"clear.{0,10}event\s+log",
-                  r"\b1102\b", r"\b104\b"]),
-           (0.3, [r"wevtutil", r"clear-eventlog", r"log.{0,10}delet"])],
-          min_score=0.7),
+                  r"wevtutil", r"clear-eventlog"]),
+           (0.3, [r"\b1102\b", r"\b104\b", r"log.{0,10}delet"])],
+          require_all=True),
 
     _Rule("defense-evasion", "T1562", "T1562.001",
           "Security tooling or audit logging disabled.",
@@ -321,7 +420,7 @@ _RULES: list[_Rule] = [
                   r"av.{0,10}disabl", r"edr.{0,10}disabl",
                   r"diagnostic.{0,15}delet"]),
            (0.4, [r"disabl", r"stop", r"remov", r"tamper"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("defense-evasion", "T1055", None,
           "Process injection — memory allocation and remote thread creation.",
@@ -329,14 +428,14 @@ _RULES: list[_Rule] = [
                   r"writeprocessmemory", r"createremotethread",
                   r"dll\s+inject", r"reflective\s+load"]),
            (0.4, [r"inject", r"shellcode", r"hollow", r"payload"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("defense-evasion", "T1036", "T1036.005",
           "Executable masquerading with lookalike name or double extension.",
           [(0.6, [r"double.?extension", r"masquerad",
                   r"\.(txt|pdf|jpg)\.exe", r"lookalike"]),
            (0.4, [r"execut", r"binary", r"suspicious\s+name"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Discovery ─────────────────────────────────────────────────────────
 
@@ -347,21 +446,21 @@ _RULES: list[_Rule] = [
                   r"\bbloodhound\b", r"\bsharphound\b"]),
            (0.5, [r"enum", r"discover", r"list\s+accounts?",
                   r"domain\s+user"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("discovery", "T1046", None,
           "Network service and port scanning.",
           [(0.6, [r"\bnmap\b", r"\bmasscan\b", r"port\s+scan",
                   r"service\s+scan", r"syn\s+scan", r"arp.?scan"]),
            (0.4, [r"discover", r"enum", r"sweep", r"probe"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("discovery", "T1069", "T1069.002",
           "Domain group and permission enumeration.",
           [(0.6, [r"net\s+localgroup", r"get-domaingroup",
                   r"\bnltest\b", r"domain\s+trust"]),
            (0.4, [r"enum", r"trust", r"permission", r"acl"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("discovery", "T1526", None,
           "Cloud service enumeration.",
@@ -369,7 +468,7 @@ _RULES: list[_Rule] = [
                   r"describesecuritygroups", r"get\s+/subscriptions"]),
            (0.5, [r"enum", r"discover", r"aws", r"azure", r"gcp",
                   r"cloud\s+resource"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("discovery", "T1018", None,
           "Remote system discovery via arp, ping sweep, or net view.",
@@ -377,7 +476,7 @@ _RULES: list[_Rule] = [
                   r"get-smbshare"]),
            (0.4, [r"discover", r"internal\s+host", r"network\s+topolog",
                   r"subnet"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Lateral Movement ──────────────────────────────────────────────────
 
@@ -394,7 +493,7 @@ _RULES: list[_Rule] = [
                   r"\b445\b", r"psexec", r"smbexec"]),
            (0.5, [r"lateral", r"remote\s+exec", r"multiple.*host",
                   r"deploy", r"drop.{0,10}exe"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("lateral-movement", "T1021", "T1021.006",
           "WMI-based remote execution for lateral movement.",
@@ -403,24 +502,37 @@ _RULES: list[_Rule] = [
                   r"target\s+host", r"internal"])],
           require_all=True),
 
-    _Rule("lateral-movement", "T1558", "T1558.001",
+    # NOTE (fixed): T1558 "Steal or Forge Kerberos Tickets" — including
+    # .001 Golden Ticket and .002 Silver Ticket — belongs to the
+    # Credential Access tactic in MITRE ATT&CK, not Lateral Movement.
+    # This is consistent with T1558.003/.004 which are correctly tagged
+    # credential-access elsewhere in this same rule set; .001/.002 were
+    # simply inconsistent with their own siblings. Verified against
+    # attack.mitre.org.
+
+    _Rule("credential-access", "T1558", "T1558.001",
           "Golden Ticket attack via forged TGT.",
           [(0.8, [r"golden\s+ticket", r"krbtgt", r"forged.{0,10}tgt"]),
            (0.2, [r"kerberos", r"ticket", r"\b4769\b"])],
-          min_score=0.8),
+          require_all=True),
 
-    _Rule("lateral-movement", "T1558", "T1558.002",
+    _Rule("credential-access", "T1558", "T1558.002",
           "Silver Ticket attack via forged service ticket.",
           [(0.8, [r"silver\s+ticket", r"forged.{0,10}(service.ticket|tgs)"]),
            (0.2, [r"kerberos", r"service\s+ticket"])],
-          min_score=0.8),
+          require_all=True),
 
-    _Rule("lateral-movement", "T1557", "T1557.001",
+    # NOTE (fixed): T1557 "Adversary-in-the-Middle" (including .001
+    # LLMNR/NBT-NS Poisoning and SMB Relay) is tagged Credential Access
+    # and Collection in MITRE ATT&CK, not Lateral Movement. Verified
+    # against attack.mitre.org.
+
+    _Rule("credential-access", "T1557", "T1557.001",
           "NTLM relay — LLMNR/NBT-NS poisoning.",
           [(0.7, [r"ntlm\s+relay", r"\bresponder\b", r"\binveigh\b",
                   r"llmnr.{0,10}poison", r"nbt.?ns.{0,10}poison"]),
            (0.3, [r"relay", r"poison", r"mitm", r"capture"])],
-          min_score=0.7),
+          require_all=True),
 
     _Rule("lateral-movement", "T1570", None,
           "Lateral tool transfer — dropping executable on remote share.",
@@ -429,7 +541,7 @@ _RULES: list[_Rule] = [
                   r"transfer.{0,15}tool"]),
            (0.4, [r"remote\s+host", r"unc\s+path", r"admin\$",
                   r"lateral"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Exfiltration ──────────────────────────────────────────────────────
 
@@ -438,7 +550,7 @@ _RULES: list[_Rule] = [
           [(0.5, [r"\bftp\b", r"\bsftp\b"]),
            (0.5, [r"exfil", r"upload", r"transfer.{0,15}external",
                   r"large.{0,10}transfer", r"data.{0,10}out"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("exfiltration", "T1567", "T1567.002",
           "Exfiltration to cloud storage service.",
@@ -447,7 +559,7 @@ _RULES: list[_Rule] = [
                   r"wetransfer"]),
            (0.5, [r"upload", r"exfil", r"transfer",
                   r"large.{0,10}(amount|file|data)"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("exfiltration", "T1020", None,
           "Automated exfiltration via inbox forwarding rule.",
@@ -458,19 +570,25 @@ _RULES: list[_Rule] = [
                   r"personal.{0,10}email"])],
           require_all=True),
 
-    _Rule("exfiltration", "T1071", "T1071.004",
+    # NOTE (fixed): T1071.004 "Application Layer Protocol: DNS" belongs
+    # to the Command and Control tactic in MITRE ATT&CK, not Exfiltration
+    # — even when the payload being tunnelled is stolen data, the ATT&CK
+    # technique classification for the DNS-tunnelling channel itself is
+    # C2. Verified against attack.mitre.org.
+
+    _Rule("command-and-control", "T1071", "T1071.004",
           "DNS tunnelling or high-volume TXT/NULL record exfiltration.",
           [(0.6, [r"dns.{0,10}tunnel", r"dns.{0,10}exfil",
                   r"txt\s+record", r"null\s+record", r"\bdga\b"]),
            (0.4, [r"dns", r"exfil", r"covert", r"tunnel"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("exfiltration", "T1030", None,
           "Data transfer size limits — chunked exfiltration.",
           [(0.6, [r"chunk", r"split.{0,10}transfer",
                   r"size.{0,10}limit", r"throttl"]),
            (0.4, [r"exfil", r"transfer", r"upload"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Impact ────────────────────────────────────────────────────────────
 
@@ -480,7 +598,7 @@ _RULES: list[_Rule] = [
                   r"file.{0,10}encrypt"]),
            (0.5, [r"mass\s+renam", r"extension\s+change",
                   r"unknown\s+extension", r"ransom"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("impact", "T1490", None,
           "Shadow copy / backup deletion pre-encryption.",
@@ -488,29 +606,29 @@ _RULES: list[_Rule] = [
                   r"wmic.{0,20}shadowcopy.{0,10}delete",
                   r"bcdedit.{0,20}recoveryenabled"]),
            (0.3, [r"delet", r"remov", r"disabl"])],
-          min_score=0.7),
+          require_all=True),
 
     _Rule("impact", "T1485", None,
           "Data destruction: mass deletion or disk wipe.",
           [(0.5, [r"mass\s+delet", r"\bwipe\b", r"destroy",
                   r"format.{0,10}disk", r"mbr.{0,10}overwrite"]),
            (0.5, [r"file", r"disk", r"data", r"volume"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("impact", "T1496", None,
           "Resource hijacking: cryptomining on compromised host.",
           [(0.5, [r"crypto.{0,10}min", r"mining\s+pool",
-                  r"\bxmr\b", r"\bmonero\b", r"high\s+cpu"]),
+                  r"\bxmr\b", r"\bmonero\b"]),
            (0.5, [r"pool", r"miner", r"coin",
-                  r"port\s+3333", r"port\s+4444"])],
-          min_score=0.5),
+                  r"port\s+3333", r"port\s+4444", r"high\s+cpu"])],
+          require_all=True),
 
     _Rule("impact", "T1531", None,
           "Account access removal: bulk deletion or lockout.",
           [(0.6, [r"account.{0,10}delet", r"bulk.{0,10}delet",
                   r"mass.{0,10}lockout", r"disable.{0,10}account"]),
            (0.4, [r"user", r"account", r"access"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Initial Access ────────────────────────────────────────────────────
 
@@ -521,7 +639,7 @@ _RULES: list[_Rule] = [
                   r"\.xlsm\b", r"\.hta\b", r"\.iso\b"]),
            (0.5, [r"spawn", r"child.{0,10}process",
                   r"macro", r"winword", r"excel"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("initial-access", "T1190", None,
           "Exploitation of public-facing web application.",
@@ -530,7 +648,7 @@ _RULES: list[_Rule] = [
                   r"remote\s+code\s+exec"]),
            (0.5, [r"public.{0,10}facing", r"web\s+app",
                   r"http", r"request", r"endpoint"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("initial-access", "T1078", None,
           "Valid credentials used for initial access.",
@@ -538,7 +656,7 @@ _RULES: list[_Rule] = [
                   r"compromised\s+account", r"account\s+takeover"]),
            (0.5, [r"initial\s+access", r"first\s+(login|logon|access)",
                   r"new\s+device", r"unknown\s+location"])],
-          min_score=0.5),
+          require_all=True),
 
     # ── Collection ────────────────────────────────────────────────────────
 
@@ -548,7 +666,7 @@ _RULES: list[_Rule] = [
                   r"\barchive\b", r"\bcompress\b"]),
            (0.5, [r"stage", r"collect", r"before.{0,10}exfil",
                   r"usb", r"removable"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("collection", "T1114", "T1114.002",
           "Remote email collection via direct mailbox access.",
@@ -556,7 +674,7 @@ _RULES: list[_Rule] = [
                   r"exchange.{0,10}read", r"\bowa\b"]),
            (0.5, [r"bulk.{0,10}read", r"inbox",
                   r"forward", r"harvest"])],
-          min_score=0.5),
+          require_all=True),
 
     _Rule("collection", "T1056", "T1056.001",
           "Keylogger installed via hook or driver.",
@@ -564,17 +682,24 @@ _RULES: list[_Rule] = [
                   r"wh_keyboard", r"setwindowshookex"]),
            (0.4, [r"hook", r"input\s+capture",
                   r"monitor", r"record"])],
-          min_score=0.6),
+          require_all=True),
 
     # ── Command and Control ───────────────────────────────────────────────
 
+    # NOTE (fixed): the second signal group previously included a bare
+    # `https?` pattern at weight 0.5 with min_score=0.5 and require_all=
+    # False, meaning ANY mention of "http" or "https" — with none of the
+    # actual C2 vocabulary in the first group — was enough to classify a
+    # query as C2 beaconing. Switched to require_all=True and dropped the
+    # bare protocol pattern from the second group so both a genuine C2
+    # term AND a supporting behavioural signal are required.
     _Rule("command-and-control", "T1071", "T1071.001",
           "C2 beaconing over HTTP/HTTPS at regular intervals.",
           [(0.5, [r"\bbeacon", r"\bc2\b", r"command.{0,10}control",
                   r"call.{0,10}home"]),
-           (0.5, [r"https?", r"regular.{0,10}interval",
-                  r"periodic", r"same.{0,15}external.{0,10}ip"])],
-          min_score=0.5),
+           (0.5, [r"regular.{0,10}interval", r"periodic",
+                  r"same.{0,15}external.{0,10}ip", r"jitter"])],
+          require_all=True),
 
     _Rule("command-and-control", "T1572", None,
           "Protocol tunnelling for covert C2 channel.",
@@ -582,27 +707,32 @@ _RULES: list[_Rule] = [
            (0.4, [r"dns.{0,10}tunnel", r"icmp.{0,10}tunnel",
                   r"http.{0,10}tunnel", r"ssh.{0,10}tunnel",
                   r"port.{0,10}forward"])],
-          min_score=0.6),
+          require_all=True),
 
     _Rule("command-and-control", "T1090", "T1090.003",
           "Tor / anonymisation network used for C2.",
           [(0.8, [r"\btor\b", r"onion\s+network",
                   r"exit\s+node", r"\b9001\b", r"\b9030\b"]),
            (0.2, [r"anonymi", r"proxy", r"dark\s+web"])],
-          min_score=0.8),
+          require_all=True),
 ]
 
 
-def _run_heuristics(nl_query: str, t0: float) -> ClassificationResult | None:
+def _run_heuristics(nl_query: str, t0: float, taxonomy) -> "ClassificationResult | None":
     """
     Evaluate all heuristic rules against nl_query.
-    Returns the highest-scoring ClassificationResult above
-    _HEURISTIC_THRESHOLD, or None to trigger LLM fallback.
+
+    Returns the highest-scoring ClassificationResult that (a) clears its
+    own rule's min_score, (b) clears the global _HEURISTIC_BYPASS_FLOOR,
+    and (c) verifies against the live taxonomy — or None if nothing meets
+    all three bars, signalling the caller to fall through to full LLM
+    chain-of-thought reasoning.
+
     Ties broken by preferring sub-technique over parent technique.
     """
-    q           = nl_query.lower()
-    best_score  = 0.0
-    best_rule:  _Rule | None = None
+    q          = nl_query.lower()
+    best_score = 0.0
+    best_rule: _Rule | None = None
 
     for rule in _RULES:
         s = rule.score(q)
@@ -615,12 +745,36 @@ def _run_heuristics(nl_query: str, t0: float) -> ClassificationResult | None:
             best_score = s
             best_rule  = rule
 
-    if best_rule is None or best_score < _HEURISTIC_THRESHOLD:
+    if best_rule is None:
+        return None
+
+    # Global bypass floor — independent of best_rule's own (possibly much
+    # lower) min_score. A rule that merely fired is not automatically
+    # trusted to skip LLM reasoning.
+    if best_score < _HEURISTIC_BYPASS_FLOOR:
+        return None
+
+    # Defense in depth: even a hardcoded rule can have an authoring error
+    # (this file previously shipped several — see NOTE (fixed) comments
+    # above). Verify the winning rule's tactic/technique/sub_technique
+    # triple against the live taxonomy before trusting it; if it doesn't
+    # verify, fall through to the LLM rather than emitting a wrong label.
+    try:
+        technique_entry, tactic_entry = _verify_binding(
+            taxonomy, best_rule.technique, best_rule.sub_technique, best_rule.tactic
+        )
+    except IRValidationError:
+        log.error(
+            "Heuristic rule failed taxonomy verification — falling through "
+            "to LLM. This indicates a bug in the _RULES table.",
+            extra={"tactic": best_rule.tactic, "technique": best_rule.technique,
+                   "sub_technique": best_rule.sub_technique},
+        )
         return None
 
     return ClassificationResult(
         nl_query               = nl_query,
-        tactic                 = best_rule.tactic,
+        tactic                 = tactic_entry.shortname,
         technique              = best_rule.technique,
         sub_technique          = best_rule.sub_technique,
         rationale              = best_rule.rationale,
@@ -629,15 +783,166 @@ def _run_heuristics(nl_query: str, t0: float) -> ClassificationResult | None:
         attempts               = 0,
         elapsed_s              = round(time.monotonic() - t0, 3),
     )
+
+
+def _run_heuristics_multi(
+    nl_query: str,
+    t0: float,
+    taxonomy,
+    max_techniques: int = 5,
+) -> list["ClassificationResult"]:
+    """
+    Multi-match counterpart to _run_heuristics(). Evaluates the same rule
+    set but returns every rule that clears both its own min_score AND
+    _HEURISTIC_MERGE_FLOOR (a lower bar than the single-best bypass floor,
+    since these results are merged with — not substituted for — LLM
+    reasoning). Every returned item is taxonomy-verified.
+
+    Returns:
+        Ranked list of ClassificationResult, highest confidence first.
+        Empty list if nothing clears the merge floor — caller should still
+        run the LLM path regardless of what this returns.
+    """
+    q = nl_query.lower()
+    best_by_key: dict[tuple[str, str | None], tuple[float, _Rule]] = {}
+
+    for rule in _RULES:
+        s = rule.score(q)
+        if s < _HEURISTIC_MERGE_FLOOR:
+            continue
+        key = (rule.technique, rule.sub_technique)
+        if key not in best_by_key or s > best_by_key[key][0]:
+            best_by_key[key] = (s, rule)
+
+    if not best_by_key:
+        return []
+
+    ranked  = sorted(best_by_key.values(), key=lambda pair: pair[0], reverse=True)
+    elapsed = round(time.monotonic() - t0, 3)
+
+    results: list[ClassificationResult] = []
+    for s, rule in ranked:
+        try:
+            technique_entry, tactic_entry = _verify_binding(
+                taxonomy, rule.technique, rule.sub_technique, rule.tactic
+            )
+        except IRValidationError:
+            log.error(
+                "Heuristic rule failed taxonomy verification — dropping "
+                "from multi-technique result. This indicates a bug in the "
+                "_RULES table.",
+                extra={"tactic": rule.tactic, "technique": rule.technique,
+                       "sub_technique": rule.sub_technique},
+            )
+            continue
+
+        results.append(ClassificationResult(
+            nl_query               = nl_query,
+            tactic                 = tactic_entry.shortname,
+            technique              = rule.technique,
+            sub_technique          = rule.sub_technique,
+            rationale              = rule.rationale,
+            confidence             = round(s, 4),
+            candidates_considered  = [rule.technique],
+            attempts               = 0,
+            elapsed_s              = elapsed,
+        ))
+        if len(results) >= max_techniques:
+            break
+
+    return results
+
+
+def _verify_binding(taxonomy, technique: str, sub_technique: str | None, tactic: str):
+    """
+    Verify a single (tactic, technique, sub_technique) triple against the
+    live ATT&CK taxonomy. Shared by the LLM path (via
+    ATTCKClassifierAgent._verify_binding, which now delegates here) and
+    the heuristic path, so a hardcoded rule gets exactly the same
+    hallucination/error guarantee as an LLM selection.
+
+    Returns:
+        (technique_entry, tactic_entry) on success.
+
+    Raises:
+        IRValidationError: On any mismatch — unknown technique, unknown
+                           sub-technique, sub-technique/parent mismatch,
+                           unknown tactic, or technique/tactic mismatch.
+    """
+    technique_entry = taxonomy.get_technique(technique)
+    if technique_entry is None:
+        raise IRValidationError(
+            f"technique '{technique}' does not exist in the loaded ATT&CK taxonomy",
+            details={"technique": technique},
+        )
+
+    if sub_technique is not None:
+        sub_entry = taxonomy.get_technique(sub_technique)
+        if sub_entry is None:
+            raise IRValidationError(
+                f"sub_technique '{sub_technique}' does not exist in the "
+                f"loaded ATT&CK taxonomy",
+                details={"sub_technique": sub_technique},
+            )
+        if sub_entry.parent_id != technique:
+            raise IRValidationError(
+                f"sub_technique '{sub_technique}' does not belong to "
+                f"technique '{technique}' (actual parent: "
+                f"'{sub_entry.parent_id}')",
+                details={"technique": technique, "sub_technique": sub_technique},
+            )
+
+    tactic_entry = taxonomy.get_tactic(tactic)
+    if tactic_entry is None:
+        raise IRValidationError(
+            f"tactic '{tactic}' does not exist in the loaded ATT&CK taxonomy",
+            details={"tactic": tactic},
+        )
+    if tactic_entry.shortname not in technique_entry.tactic_names:
+        raise IRValidationError(
+            f"technique '{technique}' is not associated with tactic "
+            f"'{tactic}' (technique belongs to: {technique_entry.tactic_names})",
+            details={"tactic": tactic, "technique": technique},
+        )
+
+    return technique_entry, tactic_entry
+
+
 # Number of lexically-narrowed candidates shown to the LLM for CoT reasoning.
 # Large enough to include the correct technique even when the keyword
 # search ranks it imperfectly; small enough to keep prompt cost low.
 _DEFAULT_CANDIDATE_K = 12
 
 
+def _safe_confidence(value, default: float = 0.5) -> float:
+    """
+    Coerce an LLM-provided confidence value to a float, defensively.
+
+    Handles the common failure modes seen from JSON-mode LLM output:
+      - missing key                 -> caller already defaults via .get()
+      - explicit JSON null          -> float(None) raises TypeError
+      - a numeric-looking string    -> float("0.7") works fine
+      - a non-numeric string        -> float("high") raises ValueError
+      - out-of-range values         -> clamped by callers after this
+    Never raises; always returns a usable float.
+    """
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        log.warning(
+            "LLM returned a non-numeric confidence value — using default",
+            extra={"raw_value": repr(value), "default": default},
+        )
+        return default
+
+
 @dataclass
 class ClassificationResult:
-    """Output of a single ATTCKClassifierAgent.classify() call."""
+    """Output of a single ATTCKClassifierAgent.classify() call. Also used,
+    unmodified, as the element type of the list returned by
+    classify_multi() — each match gets its own ClassificationResult."""
 
     nl_query:        str
     tactic:          str             # ATT&CK tactic shortname
@@ -696,11 +1001,62 @@ CANDIDATES:
 """.strip()
 
 
+# ── Multi-technique prompt template ────────────────────────────────────────
+# Same taxonomy grounding and candidate list as the single-technique prompt
+# above — only the requested output shape changes, from one object to a
+# ranked array.
+
+_MULTI_CLASSIFIER_SYSTEM_PROMPT = """You are a MITRE ATT&CK classification expert.
+
+Given a natural language security detection description, identify EVERY
+plausible MITRE ATT&CK technique (and sub-technique, where applicable) it
+could correspond to, choosing ONLY from the candidate list below. Do not
+invent a technique ID that is not in the list.
+
+A single detection often legitimately maps to more than one technique —
+e.g. "repeated failed SSH logins from one IP" is password guessing
+(T1110.001), but could also indicate password spraying (T1110.003) if
+multiple accounts are targeted. Return every technique a reasonable
+analyst would tag, ranked by how precisely the query's described
+behaviour matches that technique's official description. Return between
+1 and 5 techniques — do not pad the list with weak matches just to reach 5.
+
+Reasoning process (think step by step, then output JSON):
+  1. Identify every distinct adversary BEHAVIOUR described in the query.
+  2. Compare each behaviour against each candidate's description.
+  3. Prefer a sub-technique over its parent technique when the query's
+     specificity supports it (e.g. "password guessing" -> T1110.001).
+  4. Score each match's confidence by how precisely it fits — not by how
+     common the technique is in general.
+  5. Sort matches by confidence, descending.
+
+Output ONLY a JSON object with this exact shape, no markdown, no preamble:
+{{
+  "matches": [
+    {{
+      "tactic": "<tactic-shortname>",
+      "technique": "T####",
+      "sub_technique": "T####.###" or null,
+      "rationale": "<one sentence citing the specific behaviour-to-description match>",
+      "confidence": <float 0.0-1.0>
+    }}
+  ]
+}}
+
+CANDIDATES:
+{candidates_block}
+""".strip()
+
+
 class ATTCKClassifierAgent:
     """
     Infers MITRE ATT&CK tactic/technique/sub-technique bindings for natural
     language detection descriptions, using taxonomy-grounded chain-of-thought
     reasoning with mandatory post-hoc verification.
+
+    classify() returns the single best match. classify_multi() runs the
+    identical pipeline but returns every technique that clears taxonomy
+    verification, ranked by confidence.
 
     Args:
         client:        LLMClient instance (any supported provider).
@@ -751,11 +1107,12 @@ class ATTCKClassifierAgent:
                          nothing and the LLM could not select a fallback).
         """
         t0 = time.monotonic()
-        # ── Heuristic fast-path ───────────────────────────────────────────────
-    # Runs before candidate search and LLM call.
-    # High-confidence, multi-signal rules only — single keyword never fires.
-    # Falls through to full CoT reasoning if no rule scores above threshold.
-        heuristic_result = _run_heuristics(nl_query, t0)
+        # ── Heuristic fast-path ───────────────────────────────────────────
+        # Only bypasses the LLM when the winning rule clears BOTH its own
+        # min_score AND the global _HEURISTIC_BYPASS_FLOOR, and only after
+        # taxonomy verification succeeds. Anything weaker falls through to
+        # full CoT reasoning.
+        heuristic_result = _run_heuristics(nl_query, t0, self._taxonomy)
         if heuristic_result is not None:
             log.info(
                 "Heuristic fast-path hit — skipping LLM classification",
@@ -763,10 +1120,8 @@ class ATTCKClassifierAgent:
                     "confidence": heuristic_result.confidence},
             )
             return heuristic_result
-        # ── End heuristic fast-path ───────────────────────────────────────────
+        # ── End heuristic fast-path ───────────────────────────────────────
 
-        
-        
         candidates = self._taxonomy.search_techniques(nl_query, top_k=self.candidate_k)
         if not candidates:
             # Fall back to a broad sweep across all techniques' names only,
@@ -783,6 +1138,8 @@ class ATTCKClassifierAgent:
         candidates_block = self._format_candidates(candidates)
 
         last_error = ""
+        parsed: dict = {}   # defined up front so an early-failing except
+                            # block below never hits a NameError on `parsed`
         for attempt in range(1, self.max_retries + 1):
             try:
                 messages = [
@@ -820,16 +1177,15 @@ class ATTCKClassifierAgent:
                 )
                 return result
 
-            except (IRValidationError, ValueError) as exc:
-                print("\n========== REJECTED ==========")
-                print("QUERY:", nl_query)
-                print("PARSED:", parsed)
-                print("ERROR:", exc)
-                print("==============================\n")
+            # NOTE (fixed): TypeError added — a JSON-null "confidence" field
+            # (`float(None)`) previously escaped this tuple entirely and
+            # crashed the whole classify() call instead of triggering a
+            # retry like every other malformed-response case does.
+            except (IRValidationError, ValueError, TypeError) as exc:
                 last_error = str(exc)
                 log.warning(
                     "Classification attempt rejected — retrying",
-                    extra={"attempt": attempt, "error": last_error},
+                    extra={"attempt": attempt, "error": last_error, "parsed": parsed},
                 )
             except LLMError as exc:
                 last_error = f"LLM error: {exc}"
@@ -844,6 +1200,192 @@ class ATTCKClassifierAgent:
                 "last_error":   last_error,
                 "candidates":   candidate_ids,
                 "elapsed_s":    elapsed,
+            },
+        )
+
+    def classify_multi(self, nl_query: str, max_techniques: int = 5) -> list[ClassificationResult]:
+        """
+        Classify a natural language query against the MITRE ATT&CK taxonomy,
+        returning EVERY plausible technique ranked by confidence — instead
+        of classify()'s single best match.
+
+        The LLM is always called (heuristics never replace it here — see
+        classify() for the fast-path-eligible single-best case). Heuristic
+        hits above _HEURISTIC_MERGE_FLOOR are folded in as a recall boost
+        for techniques the LLM's semantic reasoning might not have
+        surfaced, but the LLM result is treated as the primary signal: on
+        a key collision, the LLM's entry is kept unless the heuristic
+        score exceeds it by a wide margin (>= 0.2), since the two scores
+        are on different, not-directly-comparable scales (weighted
+        keyword sum vs. self-reported LLM confidence) and blindly taking
+        the max let a crude keyword match silently outrank a taxonomy-
+        grounded LLM judgement for the same technique.
+
+        Same taxonomy-verification guarantee throughout: a hallucinated
+        technique ID can never survive into the returned list — an
+        unverifiable item is dropped, not silently kept.
+
+        Args:
+            nl_query:       Free-text detection description.
+            max_techniques: Upper bound on how many ranked techniques to
+                            return after verification (default 5).
+
+        Returns:
+            list[ClassificationResult], ordered by confidence descending,
+            length >= 1 on success.
+
+        Raises:
+            NLSIEMError: If no technique could be verified after all
+                         retry attempts (heuristic hits, if any, are still
+                         returned in that case rather than raising, since
+                         they already passed taxonomy verification when
+                         they were computed).
+        """
+        t0 = time.monotonic()
+
+        heuristic_hits = _run_heuristics_multi(nl_query, t0, self._taxonomy, max_techniques)
+        if heuristic_hits:
+            log.info(
+                "Heuristic hits found — will still run LLM and merge",
+                extra={
+                    "count": len(heuristic_hits),
+                    "top":   f"{heuristic_hits[0].tactic}/{heuristic_hits[0].technique}",
+                },
+            )
+
+        try:
+            llm_hits = self._classify_multi_via_llm(nl_query, t0, max_techniques)
+        except NLSIEMError:
+            # The LLM path exhausted its retries. Don't lose heuristic
+            # signal we already verified — degrade to heuristics-only
+            # rather than raising, if we have anything to return at all.
+            if heuristic_hits:
+                log.warning(
+                    "LLM multi-classification failed after retries — "
+                    "falling back to heuristic-only results",
+                    extra={"count": len(heuristic_hits)},
+                )
+                return heuristic_hits
+            raise
+
+        # Merge policy: LLM entries win ties. A heuristic hit only
+        # displaces or adds to the merged result if it's a new key, or if
+        # its score beats the LLM's for that same key by a wide margin —
+        # the two scores are not on a directly comparable scale, so a
+        # small numeric edge shouldn't be enough to override taxonomy-
+        # grounded LLM reasoning.
+        _OVERRIDE_MARGIN = 0.2
+        merged: dict[tuple[str, str | None], ClassificationResult] = {
+            (r.technique, r.sub_technique): r for r in llm_hits
+        }
+        for h in heuristic_hits:
+            key = (h.technique, h.sub_technique)
+            if key not in merged:
+                merged[key] = h
+            elif h.confidence > merged[key].confidence + _OVERRIDE_MARGIN:
+                merged[key] = h
+
+        ranked = sorted(merged.values(), key=lambda r: r.confidence, reverse=True)
+        results = ranked[:max_techniques]
+
+        log.info(
+            "Multi-technique ATT&CK classification complete",
+            extra={
+                "count":           len(results),
+                "heuristic_count": len(heuristic_hits),
+                "llm_count":       len(llm_hits),
+            },
+        )
+        return results
+
+    def _classify_multi_via_llm(
+        self,
+        nl_query: str,
+        t0: float,
+        max_techniques: int,
+    ) -> list[ClassificationResult]:
+        """
+        LLM-only half of classify_multi(), factored out so classify_multi()
+        can always invoke it and merge the result with heuristic hits
+        instead of treating heuristics and the LLM as mutually exclusive
+        paths.
+
+        Raises:
+            NLSIEMError: If no technique could be verified after all
+                         retry attempts. Caller (classify_multi) decides
+                         whether to fall back to heuristic-only results.
+        """
+        candidates = self._taxonomy.search_techniques(nl_query, top_k=self.candidate_k)
+        if not candidates:
+            candidates = self._taxonomy.all_techniques()[: self.candidate_k]
+            log.warning(
+                "No lexical candidates found — falling back to a broad slice "
+                "of the full technique list",
+                extra={"nl_query": nl_query[:80]},
+            )
+
+        candidate_ids = [c.technique_id for c in candidates]
+        candidates_block = self._format_candidates(candidates)
+
+        last_error = ""
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                messages = [
+                    {
+                        "role": "system",
+                        "content": _MULTI_CLASSIFIER_SYSTEM_PROMPT.format(
+                            candidates_block=candidates_block
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f'NL Query: "{nl_query}"'
+                            + (f"\n\nPrevious attempt was rejected: {last_error}. "
+                               f"Choose ONLY from the candidate list above, and "
+                               f"return valid JSON matching the required shape."
+                               if attempt > 1 else "")
+                        ),
+                    },
+                ]
+
+                raw = self.client.complete(messages=messages, json_mode=True, temperature=0.0)
+                parsed = self._parser.extract_ir_dict(raw)
+
+                results = self._validate_and_build_multi(
+                    nl_query       = nl_query,
+                    parsed         = parsed,
+                    candidate_ids  = candidate_ids,
+                    max_techniques = max_techniques,
+                    attempts       = attempt,
+                    elapsed_s      = round(time.monotonic() - t0, 3),
+                )
+
+                log.info(
+                    "LLM multi-technique classification succeeded",
+                    extra={"count": len(results), "attempts": attempt},
+                )
+                return results
+
+            except (IRValidationError, ValueError) as exc:
+                last_error = str(exc)
+                log.warning(
+                    "Multi-technique classification attempt rejected — retrying",
+                    extra={"attempt": attempt, "error": last_error},
+                )
+            except LLMError as exc:
+                last_error = f"LLM error: {exc}"
+                log.warning("LLM error during multi-classification — retrying", extra={"error": str(exc)})
+
+        elapsed = round(time.monotonic() - t0, 3)
+        raise NLSIEMError(
+            f"ATTCKClassifierAgent.classify_multi failed after {self.max_retries} "
+            f"attempts for query: '{nl_query[:80]}'",
+            details={
+                "nl_query":   nl_query,
+                "last_error": last_error,
+                "candidates": candidate_ids,
+                "elapsed_s":  elapsed,
             },
         )
 
@@ -866,10 +1408,51 @@ class ATTCKClassifierAgent:
             sub_technique = classification.sub_technique,
         )
 
+    def attach_multi(
+        self,
+        base_ir: IRQuery,
+        classifications: list[ClassificationResult],
+    ) -> list[AttckIRQuery]:
+        """
+        Attach every technique in a classify_multi() result to the same
+        base IRQuery, producing one AttckIRQuery per technique binding.
+
+        Useful for coverage accounting where a single detection
+        legitimately counts toward several ATT&CK techniques — feed the
+        resulting list into ATTCKCoverageAuditor as separate rule entries
+        that all happen to share one underlying query.
+
+        Args:
+            base_ir:         IRQuery produced by ParserAgent (Layer 5).
+            classifications: Output of classify_multi().
+
+        Returns:
+            list[AttckIRQuery], same order/length as classifications.
+        """
+        return [
+            AttckIRQuery.from_ir_query(
+                base          = base_ir,
+                tactic        = c.tactic,
+                technique     = c.technique,
+                sub_technique = c.sub_technique,
+            )
+            for c in classifications
+        ]
+
     def classify_and_attach(self, nl_query: str, base_ir: IRQuery) -> tuple[AttckIRQuery, ClassificationResult]:
         """Convenience: classify() followed by attach() in one call."""
         result = self.classify(nl_query)
         return self.attach(base_ir, result), result
+
+    def classify_and_attach_multi(
+        self,
+        nl_query: str,
+        base_ir: IRQuery,
+        max_techniques: int = 5,
+    ) -> tuple[list[AttckIRQuery], list[ClassificationResult]]:
+        """Convenience: classify_multi() followed by attach_multi() in one call."""
+        results = self.classify_multi(nl_query, max_techniques=max_techniques)
+        return self.attach_multi(base_ir, results), results
 
     # ─────────────────────────────────────────────
     # Internal helpers
@@ -914,14 +1497,17 @@ class ATTCKClassifierAgent:
         technique     = str(parsed.get("technique", "")).strip().upper()
         sub_technique = parsed.get("sub_technique")
         # Fix common LLM behavior:
-# if technique itself is a sub-technique, split it into parent+child.
+        # if technique itself is a sub-technique, split it into parent+child.
         if "." in technique:
             if sub_technique in (None, "", technique):
                 sub_technique = technique
             technique = technique.split(".")[0]
         tactic        = str(parsed.get("tactic", "")).strip().lower()
         rationale     = str(parsed.get("rationale", "")).strip()
-        confidence    = float(parsed.get("confidence", 0.5))
+        # (fixed) was: float(parsed.get("confidence", 0.5)) — raised
+        # uncaught TypeError on an explicit JSON null. _safe_confidence()
+        # never raises and logs the anomaly instead.
+        confidence    = _safe_confidence(parsed.get("confidence", 0.5))
 
         if sub_technique is not None:
             sub_technique = str(sub_technique).strip().upper()
@@ -937,45 +1523,9 @@ class ATTCKClassifierAgent:
         # this is the hard guarantee that prevents a hallucinated ID from
         # silently reaching the IR layer, regardless of whether it happened
         # to also appear in the candidate list (defence in depth).
-        technique_entry = self._taxonomy.get_technique(technique)
-        if technique_entry is None:
-            raise IRValidationError(
-                f"LLM selected technique '{technique}' which does not exist "
-                f"in the loaded ATT&CK taxonomy",
-                details={"technique": technique, "candidates": candidate_ids},
-            )
-
-        if sub_technique is not None:
-            sub_entry = self._taxonomy.get_technique(sub_technique)
-            if sub_entry is None:
-                raise IRValidationError(
-                    f"LLM selected sub_technique '{sub_technique}' which does "
-                    f"not exist in the loaded ATT&CK taxonomy",
-                    details={"sub_technique": sub_technique},
-                )
-            if sub_entry.parent_id != technique:
-                raise IRValidationError(
-                    f"sub_technique '{sub_technique}' does not belong to "
-                    f"technique '{technique}' (actual parent: "
-                    f"'{sub_entry.parent_id}')",
-                    details={"technique": technique, "sub_technique": sub_technique},
-                )
-
-        # Normalise tactic to the canonical shortname recognised by the
-        # taxonomy, rather than trusting the LLM's exact casing/spelling.
-        tactic_entry = self._taxonomy.get_tactic(tactic)
-        if tactic_entry is None:
-            raise IRValidationError(
-                f"LLM selected tactic '{tactic}' which does not exist in the "
-                f"loaded ATT&CK taxonomy",
-                details={"tactic": tactic},
-            )
-        if tactic_entry.shortname not in technique_entry.tactic_names:
-            raise IRValidationError(
-                f"technique '{technique}' is not associated with tactic "
-                f"'{tactic}' (technique belongs to: {technique_entry.tactic_names})",
-                details={"tactic": tactic, "technique": technique},
-            )
+        technique_entry, tactic_entry = _verify_binding(
+            self._taxonomy, technique, sub_technique, tactic
+        )
 
         return ClassificationResult(
             nl_query               = nl_query,
@@ -988,6 +1538,115 @@ class ATTCKClassifierAgent:
             attempts               = attempts,
             elapsed_s              = elapsed_s,
         )
+
+    def _verify_binding(
+        self,
+        technique:     str,
+        sub_technique: str | None,
+        tactic:        str,
+    ):
+        """
+        Instance-method wrapper kept for backward compatibility with any
+        existing callers — delegates to the shared module-level
+        _verify_binding() used by both the LLM and heuristic paths, so
+        there is exactly one implementation of the verification logic.
+
+        Raises:
+            IRValidationError: On any mismatch — unknown technique, unknown
+                               sub-technique, sub-technique/parent mismatch,
+                               unknown tactic, or technique/tactic mismatch.
+        """
+        return _verify_binding(self._taxonomy, technique, sub_technique, tactic)
+
+    def _validate_and_build_multi(
+        self,
+        nl_query:       str,
+        parsed:         dict,
+        candidate_ids:  list[str],
+        max_techniques: int,
+        attempts:       int,
+        elapsed_s:      float,
+    ) -> list[ClassificationResult]:
+        """
+        Validate every item in the LLM's ranked "matches" array against the
+        taxonomy via _verify_binding(). An individual bad item is dropped,
+        not fatal — the call only raises if NOTHING survives verification,
+        matching the "one bad entry shouldn't discard the good ones"
+        design used throughout classify_multi().
+
+        Raises:
+            ValueError: If 'matches' is missing, empty, or not a list.
+            IRValidationError: If every item fails taxonomy verification.
+        """
+        raw_matches = parsed.get("matches")
+        if not isinstance(raw_matches, list) or not raw_matches:
+            raise ValueError("LLM response missing required non-empty 'matches' array")
+
+        results: list[ClassificationResult] = []
+        seen: set[tuple[str, str | None]] = set()
+
+        for item in raw_matches:
+            # Guard against a non-dict item in the matches array (e.g. the
+            # LLM emits a bare string or null in the list) — item.get(...)
+            # below would otherwise raise AttributeError, which is NOT in
+            # the except tuple and would crash the whole multi-
+            # classification instead of just dropping that one item.
+            if not isinstance(item, dict):
+                log.debug("Dropping non-dict entry from matches array", extra={"item": repr(item)})
+                continue
+
+            try:
+                technique     = str(item.get("technique", "")).strip().upper()
+                sub_technique = item.get("sub_technique")
+                if "." in technique:
+                    if sub_technique in (None, "", technique):
+                        sub_technique = technique
+                    technique = technique.split(".")[0]
+                tactic     = str(item.get("tactic", "")).strip().lower()
+                rationale  = str(item.get("rationale", "")).strip()
+                confidence = _safe_confidence(item.get("confidence", 0.5))
+
+                if sub_technique is not None:
+                    sub_technique = str(sub_technique).strip().upper()
+                    if sub_technique.lower() in ("null", "none", ""):
+                        sub_technique = None
+
+                if not technique or not tactic:
+                    continue
+
+                technique_entry, tactic_entry = self._verify_binding(technique, sub_technique, tactic)
+
+                key = (technique, sub_technique)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                results.append(ClassificationResult(
+                    nl_query               = nl_query,
+                    tactic                 = tactic_entry.shortname,
+                    technique              = technique,
+                    sub_technique          = sub_technique,
+                    rationale              = rationale,
+                    confidence             = max(0.0, min(1.0, confidence)),
+                    candidates_considered  = candidate_ids,
+                    attempts               = attempts,
+                    elapsed_s              = elapsed_s,
+                ))
+
+            except IRValidationError as exc:
+                log.debug("Dropping unverifiable match from multi-result", extra={"error": str(exc)})
+                continue
+            except (TypeError, ValueError):
+                continue
+
+        if not results:
+            raise IRValidationError(
+                "No technique in the LLM's match list survived taxonomy verification",
+                details={"candidates": candidate_ids},
+            )
+
+        results.sort(key=lambda r: r.confidence, reverse=True)
+        return results[:max_techniques]
 
     def __repr__(self) -> str:
         return (

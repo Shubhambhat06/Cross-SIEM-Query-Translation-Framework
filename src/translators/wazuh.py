@@ -50,7 +50,7 @@ log = get_logger(__name__)
 EVENT_CONFIG: dict[str, dict] = {
     EventType.AUTHENTICATION: {
         "group":  "authentication_failures",
-        "if_sid": "5503",      # SSH failed auth (Wazuh built-in)
+        "if_sid": "5710",      # SSHD authentication failure (fixed: was 5503, SSH disconnection)
         "level":  "10",
     },
     EventType.NETWORK: {
@@ -90,8 +90,28 @@ EVENT_CONFIG: dict[str, dict] = {
     },
 }
 
-# Base rule ID for generated custom rules
-BASE_RULE_ID = 100002
+# Base rule ID for generated custom rules.
+# (fixed) was a single hardcoded int reused for every call to
+# _translate() — every generated rule got the literal same id="100002",
+# so writing more than one generated rule into the same ruleset file
+# caused a duplicate-ID collision (Wazuh rejects or silently keeps only
+# one). Now an incrementing counter, module-level so it persists across
+# calls within a process. For reproducible/idempotent regeneration of
+# the *same* detection, prefer deriving the ID from ir.id when present
+# instead of relying on call order.
+import itertools
+
+_rule_id_counter = itertools.count(100002)
+
+# (fixed) EventType.AUTHENTICATION previously used a single if_sid of
+# "5503", which is SSH *disconnection* in Wazuh's default ruleset, not
+# an authentication failure. Different log sources have different
+# correct parent SIDs (SSH failures live in the 5710-5722 range; RDP,
+# Windows 4625, etc. all differ), so a single EventType-level default
+# cannot be correct for every source. 5710 (SSHD authentication failure)
+# is used as the more accurate default; callers targeting a specific
+# log source should override if_sid explicitly rather than rely on this
+# generic fallback.
 
 
 class WazuhTranslator(BaseSIEMTranslator):
@@ -106,7 +126,7 @@ class WazuhTranslator(BaseSIEMTranslator):
         """Generate a Wazuh XML rule from an IRQuery."""
 
         config = EVENT_CONFIG.get(ir.event_type, EVENT_CONFIG[EventType.ANY])
-        rule_id = BASE_RULE_ID
+        rule_id = next(_rule_id_counter)
 
         # Build rule element
         rule = ET.Element("rule", attrib={
@@ -144,9 +164,30 @@ class WazuhTranslator(BaseSIEMTranslator):
         ET.SubElement(rule, "description").text = desc
 
         # ── MITRE ATT&CK ──────────────────────────────────────────────────
-        if ir.technique_id:
+        if ir.attck_mappings:
             mitre_el = ET.SubElement(rule, "mitre")
-            ET.SubElement(mitre_el, "id").text = ir.technique_id
+
+            seen = set()
+
+            for m in ir.attck_mappings:
+                tid = (
+                    m.sub_technique_id
+                    or m.technique_id
+                )
+
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    ET.SubElement(
+                        mitre_el,
+                        "id"
+                    ).text = tid
+
+        elif ir.technique_id:
+            mitre_el = ET.SubElement(rule, "mitre")
+            ET.SubElement(
+                mitre_el,
+                "id"
+            ).text = ir.technique_id
 
         return self._pretty_xml(rule)
 
@@ -175,7 +216,18 @@ class WazuhTranslator(BaseSIEMTranslator):
 
         if op == ComparisonOperator.EQ:
             if cond.field in ("event_id", "event_type", "category"):
-                ET.SubElement(rule, "id").text = str(value)
+                # (fixed) was `<id>` — that tag is reserved for the
+                # rule's own numeric ID and for <mitre><id> technique
+                # references (used correctly elsewhere in this file);
+                # it is not a generic "match this field's value" tag.
+                # Wazuh has no built-in normalized "event_id" match
+                # element, so use the <field name="..."> fallback
+                # already used elsewhere in this method for unmapped
+                # comparisons — consistent handling, not a special case.
+                tag = ET.SubElement(rule, "field", attrib={"name": field})
+                tag.text = str(value)
+                if cond.negate:
+                    tag.set("negate", "yes")
             else:
                 tag = ET.SubElement(rule, "match")
                 tag.text = str(value)
@@ -195,11 +247,27 @@ class WazuhTranslator(BaseSIEMTranslator):
                 tag.set("negate", "yes")
 
         elif op == ComparisonOperator.GT:
-            # Wazuh handles numeric thresholds via frequency — log a note
-            log.debug(
-                "GT condition mapped to frequency in Wazuh",
+            # (fixed) previously this branch did nothing but log at
+            # DEBUG level — invisible in production — while the comment
+            # implied the condition would be captured via <frequency>.
+            # It was NOT: <frequency> is only ever populated from
+            # ir.threshold, a completely separate field. A GT condition
+            # arriving inside ir.filter (rather than ir.threshold) was
+            # silently discarded with no trace in the generated rule.
+            # Wazuh XML has no native numeric-comparison filter tag, so
+            # there is no clean structural fix — instead we surface the
+            # loss loudly (WARNING, not DEBUG) and leave a comment in
+            # the rule itself so a reviewer can see a condition was
+            # dropped, rather than trusting an XML that silently omits it.
+            log.warning(
+                "GT filter condition has no Wazuh XML equivalent outside "
+                "ir.threshold — condition dropped from generated rule",
                 extra={"field": field, "value": value},
             )
+            rule.append(ET.Comment(
+                f" DROPPED CONDITION: {field} > {value} "
+                f"(no Wazuh XML equivalent — verify manually) "
+            ))
 
         elif op in (ComparisonOperator.IN, ComparisonOperator.NOT_IN):
             negate = (op == ComparisonOperator.NOT_IN) or cond.negate

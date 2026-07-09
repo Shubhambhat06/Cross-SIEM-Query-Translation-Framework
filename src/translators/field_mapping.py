@@ -86,14 +86,34 @@ FIELD_MAP: dict[str, dict[str, str]] = {
     },
     "status": {
         "splunk":   "status",
-        "qradar":   "eventdirection",
+        # (fixed) was "eventdirection" — that field is flow direction
+        # (inbound/outbound), not authentication/event outcome, and will
+        # never actually contain values like "failed"/"success". QRadar
+        # has no single normalized outcome field across all log sources;
+        # QIDNAME(qid) is the closest generic proxy, matched via ILIKE
+        # pattern (e.g. QIDNAME(qid) ILIKE '%failure%') rather than
+        # equality — translators using this field must build an ILIKE
+        # condition, not a straight '=' comparison.
+        "qradar":   "QIDNAME(qid)",
         "elastic":  "event.outcome",
+        # (limitation, documented) Sentinel has no single normalized
+        # "status" field across tables — SecurityEvent (Windows) uses
+        # numeric EventID (e.g. 4625 = failed logon), Syslog (Linux) has
+        # no equivalent field and requires parsing SyslogMessage text.
+        # "Status" is kept as a generic placeholder; translators that
+        # need real per-event-type status resolution (e.g. auth failures)
+        # must branch on ir.event_type rather than trusting this mapping
+        # alone — see SentinelTranslator for where that branch belongs.
         "sentinel": "Status",
         "wazuh":    "status",
     },
     "action": {
         "splunk":   "action",
-        "qradar":   "eventdirection",
+        # (fixed) was "eventdirection", duplicating the same wrong
+        # mapping used (also incorrectly) for "status". "action" and
+        # "status" are different concepts and must not collapse to the
+        # same underlying QRadar field.
+        "qradar":   "QIDNAME(qid)",
         "elastic":  "event.action",
         "sentinel": "Activity",
         "wazuh":    "action",
@@ -244,7 +264,14 @@ FIELD_MAP: dict[str, dict[str, str]] = {
     "auth_type": {
         "splunk":   "LogonType",
         "qradar":   "authtype",
-        "elastic":  "winlog.logon.type",
+        # (fixed) was "winlog.logon.type" — winlog.* is Windows-only ECS
+        # namespace; SSH/Linux authentication events have no winlog
+        # fields at all, so this broke every non-Windows auth_type filter.
+        # "event.category" narrows to authentication events generically;
+        # OS/protocol-specific filtering (e.g. process.name: "sshd" for
+        # SSH) must be added by the caller, since ECS has no single
+        # cross-platform "auth type" field.
+        "elastic":  "event.category",
         "sentinel": "LogonType",
         "wazuh":    "auth_type",
     },

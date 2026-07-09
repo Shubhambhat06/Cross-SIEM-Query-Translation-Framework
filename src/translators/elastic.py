@@ -87,6 +87,9 @@ _ECS_STATUS_VALUES: dict[str, str] = {
     "error":   "failure",
 }
 
+# Aggregation functions that require a concrete field (unlike count(*)).
+_FIELD_REQUIRED_AGG_FNS = {"distinct_count", "sum", "avg", "min", "max"}
+
 
 class ElasticTranslator(BaseSIEMTranslator):
     """Translates IRQuery objects into Elastic EQL or KQL queries."""
@@ -296,10 +299,26 @@ class ElasticTranslator(BaseSIEMTranslator):
         # ── Numeric comparisons (GT, GTE, LT, LTE) ────────────────────────
         else:
             mapped_op = self._map_op(op)
-            val_str   = f'"{value}"' if isinstance(value, str) else str(value)
+            # Numeric operators compare magnitudes; a bare numeric-looking
+            # string (e.g. "100") should NOT be quoted or EQL will treat it
+            # as a string/date compare against a numeric field and reject
+            # the type. Only genuinely non-numeric strings stay quoted.
+            if isinstance(value, str) and not self._looks_numeric(value):
+                val_str = f'"{value}"'
+            else:
+                val_str = str(value)
             expr = f"{field} {mapped_op} {val_str}"
 
         return f"not ({expr})" if cond.negate else expr
+
+    @staticmethod
+    def _looks_numeric(value: str) -> bool:
+        """Return True if a string value should be treated as numeric literal."""
+        try:
+            float(value)
+            return True
+        except (TypeError, ValueError):
+            return False
 
     # ─────────────────────────────────────────────
     # EQL aggregation + threshold
@@ -318,34 +337,41 @@ class ElasticTranslator(BaseSIEMTranslator):
           min(field)
           max(field)
           values(field)                 — collect distinct values into array
+
+        Note: sum/avg/min/max/unique_count all require a real field. If one
+        is missing we log a warning and fall back to count(*) rather than
+        silently emitting invalid syntax like `sum(*)`.
         """
         alias = agg.alias or agg.output_field
         fn    = agg.function
 
-        if fn == "count":
+        if fn in _FIELD_REQUIRED_AGG_FNS and not agg.field:
+            log.warning(
+                "Aggregation function requires a field but none was provided; "
+                "falling back to count(*)",
+                extra={"function": fn, "alias": alias},
+            )
+            agg_expr = f"count(*) as {alias}"
+
+        elif fn == "count":
             # count(*) is correct EQL syntax — not count()
             agg_expr = f"count(*) as {alias}"
 
         elif fn == "distinct_count":
             # EQL uses unique_count(), NOT count_distinct()
-            field = self._resolve(agg.field) if agg.field else "*"
-            agg_expr = f"unique_count({field}) as {alias}"
+            agg_expr = f"unique_count({self._resolve(agg.field)}) as {alias}"
 
         elif fn == "sum":
-            field = self._resolve(agg.field) if agg.field else "*"
-            agg_expr = f"sum({field}) as {alias}"
+            agg_expr = f"sum({self._resolve(agg.field)}) as {alias}"
 
         elif fn == "avg":
-            field = self._resolve(agg.field) if agg.field else "*"
-            agg_expr = f"avg({field}) as {alias}"
+            agg_expr = f"avg({self._resolve(agg.field)}) as {alias}"
 
         elif fn == "min":
-            field = self._resolve(agg.field) if agg.field else "*"
-            agg_expr = f"min({field}) as {alias}"
+            agg_expr = f"min({self._resolve(agg.field)}) as {alias}"
 
         elif fn == "max":
-            field = self._resolve(agg.field) if agg.field else "*"
-            agg_expr = f"max({field}) as {alias}"
+            agg_expr = f"max({self._resolve(agg.field)}) as {alias}"
 
         else:
             # Fallback to count
@@ -423,7 +449,8 @@ class ElasticTranslator(BaseSIEMTranslator):
         """
         Infer the best 'by <field>' grouping key for a sequence query.
 
-        Looks through filter conditions to find a shared correlation field.
+        Recursively walks every filter condition (including nested
+        FilterGroups) across all steps to find a shared correlation field.
         Priority: user > host > src_ip > user_id > hostname
         """
         CORRELATION_PRIORITY = ["user", "host", "src_ip", "user_id", "hostname"]
@@ -432,15 +459,23 @@ class ElasticTranslator(BaseSIEMTranslator):
         for step in steps:
             if not step.filter:
                 continue
-            for cond in step.filter.conditions:
-                if isinstance(cond, FilterCondition):
-                    found_fields.add(cond.field)
+            found_fields |= self._collect_condition_fields(step.filter)
 
         for candidate in CORRELATION_PRIORITY:
             if candidate in found_fields:
                 return self._resolve(candidate)
 
         return None
+
+    def _collect_condition_fields(self, group: FilterGroup) -> set[str]:
+        """Recursively collect every field referenced in a FilterGroup tree."""
+        fields: set[str] = set()
+        for cond in group.conditions:
+            if isinstance(cond, FilterCondition):
+                fields.add(cond.field)
+            elif isinstance(cond, FilterGroup):
+                fields |= self._collect_condition_fields(cond)
+        return fields
 
     # ─────────────────────────────────────────────
     # KQL builders (filter-only queries)
@@ -463,9 +498,10 @@ class ElasticTranslator(BaseSIEMTranslator):
         """
         parts: list[str] = []
 
-        # Always include event.category for specificity
+        # Always include event.category for specificity, except for the
+        # catch-all "any" category which isn't a meaningful KQL filter.
         category = EVENT_CATEGORY_MAP.get(ir.event_type, "")
-        if category and ir.event_type != "any":
+        if category and ir.event_type != EventType.ANY:
             parts.append(f'event.category: "{category}"')
 
         # Filter conditions
@@ -486,7 +522,11 @@ class ElasticTranslator(BaseSIEMTranslator):
             query += f"\n// Time range: last {ir.time_window.duration} " \
                      f"(apply via Kibana time picker, detection-rule schedule, " \
                      f"or the Search API's @timestamp range filter)"
-
+        if ir.attck_labels:
+            query += (
+                "\n// ATT&CK: "
+                + ", ".join(ir.attck_labels)
+            )
         return query
 
     def _build_kql_filter_group(self, group: FilterGroup) -> str:
@@ -643,7 +683,8 @@ class ElasticTranslator(BaseSIEMTranslator):
 
         Checks performed:
           EQL          — starts with a recognised event category + 'where'
-          EQL sequence — starts with 'sequence' and contains bracketed steps
+          EQL sequence — starts with 'sequence' and contains bracketed steps,
+                         with brackets balanced
           KQL          — contains a 'field: value' colon pattern, is '*',
                          or contains a numeric range comparison
 
@@ -674,6 +715,9 @@ class ElasticTranslator(BaseSIEMTranslator):
 
         # EQL sequence
         if first_word == "sequence":
+            if q.count("[") != q.count("]"):
+                log.warning("EQL sequence has unbalanced brackets")
+                return False
             has_steps = "[" in q and "]" in q
             if not has_steps:
                 log.warning("EQL sequence missing bracketed steps")
@@ -692,7 +736,8 @@ class ElasticTranslator(BaseSIEMTranslator):
             if "|" in q:
                 VALID_EQL_PIPES = {"stats", "where", "sort", "head", "tail"}
                 for segment in q.split("|")[1:]:
-                    cmd = segment.strip().split()[0].lower() if segment.strip() else ""
+                    stripped = segment.strip()
+                    cmd = stripped.split()[0].lower() if stripped else ""
                     if cmd and cmd not in VALID_EQL_PIPES:
                         log.warning(
                             "Unknown EQL pipe command",

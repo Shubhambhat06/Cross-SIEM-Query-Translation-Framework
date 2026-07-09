@@ -57,8 +57,8 @@ class RefinementResult:
     """Full output of a single RefinementAgent.refine() call."""
 
     nl_query:             str
-    original_translations: dict[str, str]
-    final_translations:   dict[str, str]
+    original_translations: dict[str, dict]
+    final_translations:   dict[str, dict]
     final_ir:             IRQuery
     iterations:           int
     platforms_fixed:      list[str]
@@ -248,7 +248,8 @@ class RefinementAgent:
     def refine(
         self,
         nl_query:     str,
-        translations: dict[str, str],
+
+        translations: dict[str, dict],
         report:       ValidationReport,
         ir:           IRQuery,
     ) -> RefinementResult:
@@ -291,8 +292,8 @@ class RefinementAgent:
 
         # Select strategy
         strategy = self._select_strategy(originally_failed, report)
-
-        current_translations = dict(translations)
+        import copy
+        current_translations = copy.deepcopy(translations)
         current_ir           = ir
         iteration_log:  list[dict]  = []
         platforms_fixed: list[str]  = []
@@ -335,11 +336,14 @@ class RefinementAgent:
                         try:
                             fixed_query = self._patch_query(
                                 platform     = platform,
-                                query        = current_translations.get(platform, ""),
+                                query=current_translations.get(
+                                    platform,
+                                    {},
+                                ).get("query", ""),
                                 error_detail = result.error_detail,
                             )
                             if fixed_query:
-                                current_translations[platform] = fixed_query
+                                current_translations[platform]["query"] = fixed_query
                         except Exception as exc:
                             log.warning(
                                 "Query patch failed",
@@ -454,7 +458,7 @@ class RefinementAgent:
         nl_query:       str,
         current_report: ValidationReport,
         current_ir:     IRQuery,
-    ) -> tuple[IRQuery, dict[str, str]]:
+    ) -> tuple[IRQuery, dict[str, dict]]:
         """
         Re-run the parser agent with a correction hint derived from validation failures.
         Returns new IR and new translations.
@@ -480,7 +484,7 @@ class RefinementAgent:
         new_ir       = parse_result.ir
 
         # Re-translate with new IR
-        new_translations = {}
+        new_translations: dict[str, dict] = {}
         try:
             new_translations = translate_all(new_ir)
         except Exception as exc:

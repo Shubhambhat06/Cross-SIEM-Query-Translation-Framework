@@ -156,7 +156,8 @@ class ValidatorAgent:
         t0      = time.monotonic()
         results = {}
 
-        for platform, query in translations.items():
+        for platform, payload in translations.items():
+            query = payload["query"]
             validator_fn = getattr(self, f"_validate_{platform}", self._validate_unknown)
             result       = validator_fn(query)
             result.platform = platform  # ensure set even if returned bare

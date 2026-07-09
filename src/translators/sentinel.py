@@ -119,7 +119,15 @@ class SentinelTranslator(BaseSIEMTranslator):
         if ir.fields:
             resolved = self._resolve_all(ir.fields)
             pipes.append(f"project {', '.join(resolved)}")
+        if ir.attck_labels:
+            labels = ", ".join(
+                f'"{x}"'
+                for x in ir.attck_labels
+            )
 
+            pipes.append(
+                f"extend MITRETechniques = dynamic([{labels}])"
+            )
         return "\n| ".join(pipes)
 
     # ─────────────────────────────────────────────

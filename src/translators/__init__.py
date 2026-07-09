@@ -42,7 +42,10 @@ def translate_all(ir: IRQuery) -> dict[str, str]:
     results: dict[str, str] = {}
     for platform, translator in _TRANSLATORS.items():
         try:
-            results[platform] = translator.translate(ir)
+            results[platform] = {
+                "query": translator.translate(ir),
+                "attck": ir.attck_labels,
+            }
         except Exception as exc:
             results[platform] = f"ERROR: {exc}"
     return results

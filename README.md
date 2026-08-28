@@ -9,7 +9,7 @@ Prevention via Intermediate Representation and Multi-Agent LLMs</h3>
   <img src="https://img.shields.io/badge/Python-3.10%2B-3572A5?style=for-the-badge&logo=python&logoColor=white"/>
   <img src="https://img.shields.io/badge/License-MIT-2e7d32?style=for-the-badge"/>
   <img src="https://img.shields.io/badge/Dataset-SIEMBench_v1-7B1FA2?style=for-the-badge"/>
-  <img src="https://img.shields.io/badge/Status-Under_Review-F57C00?style=for-the-badge"/>
+  <img src="https://img.shields.io/badge/Status-Accepted-2E7D32?style=for-the-badge"/>
   <img src="https://img.shields.io/badge/Black_Hat_Arsenal-India_2026-black?style=for-the-badge"/>
 </p>
 

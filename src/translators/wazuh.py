@@ -126,7 +126,13 @@ class WazuhTranslator(BaseSIEMTranslator):
         """Generate a Wazuh XML rule from an IRQuery."""
 
         config = EVENT_CONFIG.get(ir.event_type, EVENT_CONFIG[EventType.ANY])
-        rule_id = next(_rule_id_counter)
+        # (improved) prefer a deterministic ID derived from ir.id when the
+        # caller supplied one, so regenerating the *same* detection twice
+        # (e.g. re-running the pipeline, CI diffing) produces the same rule
+        # ID instead of a new one every call. Falls back to the
+        # incrementing counter — still unique within a process — only
+        # when no stable identifier is available.
+        rule_id = self._derive_rule_id(ir.id) if ir.id else next(_rule_id_counter)
 
         # Build rule element
         rule = ET.Element("rule", attrib={
@@ -150,11 +156,32 @@ class WazuhTranslator(BaseSIEMTranslator):
                 ET.SubElement(rule, tag)
 
         # ── Threshold → frequency + timeframe ─────────────────────────────
+        # (fixed) <timeframe> only has any effect on Wazuh's frequency-based
+        # correlation when paired with <frequency> — a standalone
+        # <timeframe> with no <frequency> is silently ignored by the rule
+        # engine. Wazuh rules trigger on live event streams; there is no
+        # native concept of "query the last N hours" the way the other
+        # four platforms have earliest/latest or LAST N HOURS. Previously
+        # any ir.time_window emitted a <timeframe> tag regardless of
+        # whether ir.threshold was set, producing XML that looks like it
+        # bounds the rule to 24h but has no actual effect.
         if ir.threshold:
             ET.SubElement(rule, "frequency").text = str(ir.threshold.value)
-
-        if ir.time_window:
-            ET.SubElement(rule, "timeframe").text = str(ir.time_window.to_seconds)
+            if ir.time_window:
+                ET.SubElement(rule, "timeframe").text = str(ir.time_window.to_seconds)
+        elif ir.time_window:
+            log.warning(
+                "time_window with no threshold has no Wazuh XML equivalent "
+                "— <timeframe> only has effect paired with <frequency> — "
+                "condition dropped from generated rule",
+                extra={"duration": ir.time_window.duration},
+            )
+            rule.append(ET.Comment(
+                f" NOTE: time_window={ir.time_window.duration} has no Wazuh "
+                f"XML equivalent without a threshold — Wazuh rules trigger "
+                f"on live events, not a bounded historical query; verify "
+                f"manually "
+            ))
 
         # ── Group tag ─────────────────────────────────────────────────────
         ET.SubElement(rule, "group").text = config["group"] + ","
@@ -284,6 +311,17 @@ class WazuhTranslator(BaseSIEMTranslator):
             tag.text = str(value)
             if cond.negate:
                 tag.set("negate", "yes")
+
+    @staticmethod
+    def _derive_rule_id(ir_id: str) -> int:
+        """
+        Deterministically map an IR record ID to a custom-range Wazuh
+        rule ID (100000-109999), so the same detection always regenerates
+        the same rule ID instead of depending on call order.
+        """
+        import hashlib
+        digest = hashlib.sha256(ir_id.encode("utf-8")).hexdigest()
+        return 100000 + (int(digest[:8], 16) % 9999)
 
     def _get_same_tag(self, field: str) -> str:
         """Map a field name to a Wazuh same_* grouping tag."""

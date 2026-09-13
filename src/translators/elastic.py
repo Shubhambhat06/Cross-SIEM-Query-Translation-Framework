@@ -253,47 +253,47 @@ class ElasticTranslator(BaseSIEMTranslator):
             # Normalise ECS status values (e.g. "failed" → "failure")
             if cond.field == "status" and isinstance(value, str):
                 value = _ECS_STATUS_VALUES.get(value.lower(), value)
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field} == {val_str}"
 
         # ── NEQ ───────────────────────────────────────────────────────────
         elif op == ComparisonOperator.NEQ:
             if cond.field == "status" and isinstance(value, str):
                 value = _ECS_STATUS_VALUES.get(value.lower(), value)
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field} != {val_str}"
 
         # ── CONTAINS → EQL like with wildcards ────────────────────────────
         # EQL like operator: case-sensitive wildcard matching
         # like~ : case-insensitive wildcard matching
         elif op == ComparisonOperator.CONTAINS:
-            expr = f'{field} like~ "*{value}*"'
+            expr = f'{field} like~ "*{self._escape(value)}*"'
 
         # ── REGEX → EQL match() function ──────────────────────────────────
         # EQL does NOT support inline =~ — use match(field, "regex") instead
         elif op == ComparisonOperator.REGEX:
-            expr = f'match({field}, "{value}")'
+            expr = f'match({field}, "{self._escape(value)}")'
 
         # ── IN → EQL in tuple ─────────────────────────────────────────────
         elif op == ComparisonOperator.IN:
             if isinstance(value, list):
                 items = ", ".join(
-                    f'"{v}"' if isinstance(v, str) else str(v) for v in value
+                    self._quote(v) if isinstance(v, str) else str(v) for v in value
                 )
                 expr = f"{field} in ({items})"
             else:
-                val_str = f'"{value}"' if isinstance(value, str) else str(value)
+                val_str = self._quote(value) if isinstance(value, str) else str(value)
                 expr = f"{field} == {val_str}"
 
         # ── NOT IN → EQL not in tuple ─────────────────────────────────────
         elif op == ComparisonOperator.NOT_IN:
             if isinstance(value, list):
                 items = ", ".join(
-                    f'"{v}"' if isinstance(v, str) else str(v) for v in value
+                    self._quote(v) if isinstance(v, str) else str(v) for v in value
                 )
                 expr = f"{field} not in ({items})"
             else:
-                val_str = f'"{value}"' if isinstance(value, str) else str(value)
+                val_str = self._quote(value) if isinstance(value, str) else str(value)
                 expr = f"{field} != {val_str}"
 
         # ── Numeric comparisons (GT, GTE, LT, LTE) ────────────────────────
@@ -304,7 +304,7 @@ class ElasticTranslator(BaseSIEMTranslator):
             # as a string/date compare against a numeric field and reject
             # the type. Only genuinely non-numeric strings stay quoted.
             if isinstance(value, str) and not self._looks_numeric(value):
-                val_str = f'"{value}"'
+                val_str = self._quote(value)
             else:
                 val_str = str(value)
             expr = f"{field} {mapped_op} {val_str}"
@@ -420,14 +420,19 @@ class ElasticTranslator(BaseSIEMTranslator):
             if step.within:
                 maxspan = step.within
 
-        # Infer a shared grouping field from common filter fields
-        # (prefer user, host, src_ip as correlation keys)
-        shared_field = self._infer_sequence_key(steps)
+        # (fixed) previously only ever guessed a single correlation field
+        # via a filter-field heuristic, ignoring SequenceStep.correlation_key
+        # entirely even when the caller explicitly declared one. Now uses
+        # the shared BaseSIEMTranslator helper: an explicit correlation_key
+        # always wins, and EQL's `sequence by` accepts a comma-separated
+        # field list, so multi-field correlation keys are no longer
+        # silently collapsed to a single guessed field.
+        shared_fields = self._infer_correlation_fields(steps)
 
         # Build sequence header
         header_parts = ["sequence"]
-        if shared_field:
-            header_parts.append(f"by {shared_field}")
+        if shared_fields:
+            header_parts.append(f"by {', '.join(shared_fields)}")
         if maxspan:
             header_parts.append(f"with maxspan={maxspan}")
         header = " ".join(header_parts)
@@ -445,37 +450,10 @@ class ElasticTranslator(BaseSIEMTranslator):
 
         return "\n".join(step_lines)
 
-    def _infer_sequence_key(self, steps: list[SequenceStep]) -> str | None:
-        """
-        Infer the best 'by <field>' grouping key for a sequence query.
-
-        Recursively walks every filter condition (including nested
-        FilterGroups) across all steps to find a shared correlation field.
-        Priority: user > host > src_ip > user_id > hostname
-        """
-        CORRELATION_PRIORITY = ["user", "host", "src_ip", "user_id", "hostname"]
-        found_fields: set[str] = set()
-
-        for step in steps:
-            if not step.filter:
-                continue
-            found_fields |= self._collect_condition_fields(step.filter)
-
-        for candidate in CORRELATION_PRIORITY:
-            if candidate in found_fields:
-                return self._resolve(candidate)
-
-        return None
-
-    def _collect_condition_fields(self, group: FilterGroup) -> set[str]:
-        """Recursively collect every field referenced in a FilterGroup tree."""
-        fields: set[str] = set()
-        for cond in group.conditions:
-            if isinstance(cond, FilterCondition):
-                fields.add(cond.field)
-            elif isinstance(cond, FilterGroup):
-                fields |= self._collect_condition_fields(cond)
-        return fields
+    # Sequence correlation-key inference (single-field heuristic and
+    # filter-field collection) now lives in BaseSIEMTranslator so Splunk
+    # and Sentinel's sequence/join builders share the exact same logic —
+    # see _infer_correlation_fields() / _collect_condition_fields().
 
     # ─────────────────────────────────────────────
     # KQL builders (filter-only queries)
@@ -563,19 +541,21 @@ class ElasticTranslator(BaseSIEMTranslator):
         if op == ComparisonOperator.EQ:
             if cond.field == "status" and isinstance(value, str):
                 value = _ECS_STATUS_VALUES.get(value.lower(), value)
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field}: {val_str}"
 
         # ── NEQ ───────────────────────────────────────────────────────────
         elif op == ComparisonOperator.NEQ:
             if cond.field == "status" and isinstance(value, str):
                 value = _ECS_STATUS_VALUES.get(value.lower(), value)
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"NOT {field}: {val_str}"
 
         # ── CONTAINS → KQL wildcard ────────────────────────────────────────
         elif op == ComparisonOperator.CONTAINS:
-            expr = f"{field}: *{value}*"
+            # Quoted wildcard form (valid KQL) so embedded quote/backslash
+            # characters in the value can't break out of the token.
+            expr = f'{field}: "*{self._escape(value)}*"'
 
         # ── REGEX → KQL doesn't support regex natively; use wildcard ──────
         # KQL has no regex operator — approximate with wildcard
@@ -592,22 +572,22 @@ class ElasticTranslator(BaseSIEMTranslator):
         elif op == ComparisonOperator.IN:
             if isinstance(value, list):
                 items = " or ".join(
-                    f'"{v}"' if isinstance(v, str) else str(v) for v in value
+                    self._quote(v) if isinstance(v, str) else str(v) for v in value
                 )
                 expr = f"{field}: ({items})"
             else:
-                val_str = f'"{value}"' if isinstance(value, str) else str(value)
+                val_str = self._quote(value) if isinstance(value, str) else str(value)
                 expr = f"{field}: {val_str}"
 
         # ── NOT IN → KQL negated list membership ──────────────────────────
         elif op == ComparisonOperator.NOT_IN:
             if isinstance(value, list):
                 items = " or ".join(
-                    f'"{v}"' if isinstance(v, str) else str(v) for v in value
+                    self._quote(v) if isinstance(v, str) else str(v) for v in value
                 )
                 expr = f"NOT {field}: ({items})"
             else:
-                val_str = f'"{value}"' if isinstance(value, str) else str(value)
+                val_str = self._quote(value) if isinstance(value, str) else str(value)
                 expr = f"NOT {field}: {val_str}"
 
         # ── Numeric range comparisons ──────────────────────────────────────
@@ -619,7 +599,7 @@ class ElasticTranslator(BaseSIEMTranslator):
             expr = f"{field} {mapped_op} {value}"
 
         else:
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field}: {val_str}"
 
         return f"NOT ({expr})" if cond.negate else expr

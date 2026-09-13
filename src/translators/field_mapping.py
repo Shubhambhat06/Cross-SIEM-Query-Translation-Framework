@@ -363,3 +363,26 @@ def resolve_all(fields: list[str], platform: str) -> list[str]:
 def get_canonical_fields() -> list[str]:
     """Return all known canonical field names."""
     return list(FIELD_MAP.keys())
+
+
+def validate_mapping_completeness() -> dict[str, list[str]]:
+    """
+    Verify every canonical field maps to all five platforms.
+
+    An entry silently missing a platform key falls back to the raw
+    canonical name via resolve()'s fallback — which usually produces a
+    query referencing a field that doesn't exist on that platform, and
+    fails silently rather than loudly. This walks the whole table once
+    (intended for a startup check / CI test, not the hot translation path)
+    so a missing mapping is caught before it reaches a translator.
+
+    Returns:
+        Dict of canonical_field → list of missing platform names.
+        Empty dict means the table is fully populated.
+    """
+    gaps: dict[str, list[str]] = {}
+    for field, mapping in FIELD_MAP.items():
+        missing = sorted(PLATFORMS - mapping.keys())
+        if missing:
+            gaps[field] = missing
+    return gaps

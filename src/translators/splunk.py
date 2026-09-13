@@ -14,11 +14,13 @@ Example output:
     | where attempt_count > 50
     | sort -attempt_count
     | table src_ip, user, attempt_count
+
+Example sequence output:
+    index=* earliest=-24h latest=now (user="alice" action="logon_failed") OR (user="alice" action="logon_success")
+    | transaction user maxspan=30m startswith=(action="logon_failed") endswith=(action="logon_success")
 """
 
 from __future__ import annotations
-
-import re
 
 from src.ir.schema import (
     ActionType,
@@ -59,13 +61,26 @@ class SplunkTranslator(BaseSIEMTranslator):
     def _translate(self, ir: IRQuery) -> str:
         parts: list[str] = []
 
-        # ── Base search ───────────────────────────────────────────────────
+        # ── Base search (+ sequence candidate-event OR clause) ─────────────
         search_terms = self._build_search_terms(ir)
-        parts.append(search_terms)
-
-        # ── Sequence (transaction command) ────────────────────────────────
+        transaction_pipe = None
         if ir.action == ActionType.SEQUENCE and ir.sequence:
-            parts.append(self._build_sequence(ir.sequence))
+            # (fixed) transaction needs a base search that actually
+            # retrieves every candidate event across all steps first —
+            # transaction only groups/bounds events already returned by
+            # search, it does not filter per-step on its own. Previously
+            # the transaction pipe was appended after a base search built
+            # from ir.filter alone (usually None/empty for sequence
+            # queries), so `transaction` ran over the *entire* index with
+            # no startswith/endswith boundaries — effectively unbounded.
+            search_suffix, transaction_pipe = self._build_sequence(ir)
+            if search_suffix:
+                search_terms = (
+                    f"{search_terms} {search_suffix}" if search_terms else search_suffix
+                )
+        parts.append(search_terms)
+        if transaction_pipe:
+            parts.append(transaction_pipe)
 
         # ── Lookup ────────────────────────────────────────────────────────
         if ir.lookup:
@@ -77,15 +92,9 @@ class SplunkTranslator(BaseSIEMTranslator):
 
         # ── Threshold (where) ─────────────────────────────────────────────
         if ir.threshold:
-            parts.append(self._build_where(ir.threshold))
+            parts.append(self._build_where(ir))
 
         # ── MITRE ATT&CK provenance ──────────────────────────────────────
-        # (fixed) previously this block did `return` immediately after
-        # appending, before aggregation/threshold/sort/limit/table were
-        # ever built. Since ir.attck_labels is REQUIRED and non-empty on
-        # every valid IRQuery (see schema.py), that early return fired on
-        # every single translation — silently dropping the rest of the
-        # pipeline from every Splunk query this translator ever produced.
         if ir.attck_labels:
             labels = ",".join(ir.attck_labels)
             parts.append(f'eval MITRETechniques="{labels}"')
@@ -157,22 +166,22 @@ class SplunkTranslator(BaseSIEMTranslator):
 
         # IN: use field IN (v1, v2, ...)
         elif op == ComparisonOperator.IN and isinstance(value, list):
-            vals = " ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in value)
+            vals = " ".join(self._quote(v) if isinstance(v, str) else str(v) for v in value)
             expr = f'{field} IN ({vals})'
 
         # NOT IN
         elif op == ComparisonOperator.NOT_IN and isinstance(value, list):
-            vals = " ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in value)
+            vals = " ".join(self._quote(v) if isinstance(v, str) else str(v) for v in value)
             expr = f'NOT {field} IN ({vals})'
 
         # REGEX
         elif op == ComparisonOperator.REGEX:
-            expr = f'{field}=~"{value}"'
+            expr = f'{field}=~{self._quote(value)}'
 
         # Standard operators (=, !=, >, >=, <, <=)
         else:
             mapped_op = self._map_op(op)
-            val_str   = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str   = self._quote(value) if isinstance(value, str) else str(value)
             expr = f'{field}{mapped_op}{val_str}'
 
         return f"NOT ({expr})" if cond.negate else expr
@@ -196,10 +205,14 @@ class SplunkTranslator(BaseSIEMTranslator):
             return f"stats {agg_expr} by {group_fields}"
         return f"stats {agg_expr}"
 
-    def _build_where(self, th: ThresholdCondition) -> str:
+    def _build_where(self, ir: IRQuery) -> str:
         """Build a | where command from a ThresholdCondition."""
+        th = ir.threshold
         op = self._map_op(th.op)
-        return f"where {th.field} {op} {th.value}"
+        # Reconcile against the aggregation's own alias — see
+        # BaseSIEMTranslator._threshold_field for why this matters.
+        field = self._threshold_field(ir) or th.field
+        return f"where {field} {op} {th.value}"
 
     def _build_lookup(self, lookup: LookupSpec) -> str:
         """Build a | lookup command."""
@@ -212,15 +225,63 @@ class SplunkTranslator(BaseSIEMTranslator):
             cmd += f"\n| where isnotnull({lookup.output_field or match_field})"
         return cmd
 
-    def _build_sequence(self, steps: list[SequenceStep]) -> str:
-        """Build a transaction-based sequence query."""
-        # For sequence queries, use transaction command grouped by common field
-        lines = ["transaction maxspan=30m"]
-        for i, step in enumerate(steps):
+    def _build_sequence(self, ir: IRQuery) -> tuple[str, str]:
+        """
+        Build the base-search OR clause and the `transaction` pipe for a
+        sequence/correlation IRQuery.
+
+        `transaction` only groups and time-bounds events a preceding
+        `search` stage already returned — it applies no filtering of its
+        own. This builds an OR across every step's filter as the search
+        term (so all candidate events are actually retrieved), then a
+        transaction command grouped by the inferred correlation field(s)
+        with maxspan and startswith/endswith boundaries drawn from the
+        first/last step.
+
+        Returns:
+            (search_suffix, transaction_pipe) — search_suffix is appended
+            to the base search line; transaction_pipe is appended as its
+            own pipe stage.
+        """
+        steps = ir.sequence
+
+        step_terms: list[str] = []
+        for step in steps:
             if step.filter:
-                filter_str = self._build_filter_group(step.filter)
-                lines.append(f"  [search {filter_str}]")
-        return "\n".join(lines)
+                f = self._build_filter_group(step.filter)
+                if f:
+                    step_terms.append(f"({f})")
+        search_suffix = " OR ".join(step_terms)
+
+        correlation_fields = self._infer_correlation_fields(steps)
+        if not correlation_fields:
+            log.warning(
+                "Splunk sequence: no correlation key found on any step "
+                "(no explicit correlation_key and no recognized field in "
+                "step filters) — transaction will group by default "
+                "heuristics only, verify manually"
+            )
+
+        maxspan = "30m"
+        for step in steps:
+            if step.within:
+                maxspan = step.within
+
+        txn_parts = ["transaction"]
+        if correlation_fields:
+            txn_parts.append(", ".join(correlation_fields))
+        txn_parts.append(f"maxspan={maxspan}")
+
+        if steps[0].filter:
+            first_f = self._build_filter_group(steps[0].filter)
+            if first_f:
+                txn_parts.append(f"startswith=({first_f})")
+        if steps[-1].filter:
+            last_f = self._build_filter_group(steps[-1].filter)
+            if last_f:
+                txn_parts.append(f"endswith=({last_f})")
+
+        return search_suffix, " ".join(txn_parts)
 
     # ─────────────────────────────────────────────
     # Syntax validator

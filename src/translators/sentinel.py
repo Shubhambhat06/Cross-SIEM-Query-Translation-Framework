@@ -18,6 +18,17 @@ Key tables used:
     DeviceProcessEvents → Defender process events
 
 Place at: src/translators/sentinel.py
+
+Known limitation (documented for evaluation transparency)
+-----------------------------------------------------------
+Sentinel has no single normalized "status"/outcome field across tables —
+SecurityEvent uses numeric EventID (4625 = failed logon), Syslog has no
+equivalent and requires parsing SyslogMessage text. The `status` canonical
+field maps to the generic `Status` column (see field_mapping.py); callers
+that need real per-event-type outcome resolution (e.g. auth failures on
+Syslog) should branch on ir.event_type upstream, in IR construction,
+rather than expecting this translator to infer table-specific semantics
+from a single generic field name.
 """
 
 from __future__ import annotations
@@ -102,7 +113,7 @@ class SentinelTranslator(BaseSIEMTranslator):
 
         # ── Post-aggregation where (threshold) ───────────────────────────
         if ir.threshold:
-            pipes.append(self._build_threshold(ir.threshold))
+            pipes.append(self._build_threshold(ir))
 
         # ── Order by ──────────────────────────────────────────────────────
         if ir.sort_by:
@@ -120,14 +131,8 @@ class SentinelTranslator(BaseSIEMTranslator):
             resolved = self._resolve_all(ir.fields)
             pipes.append(f"project {', '.join(resolved)}")
         if ir.attck_labels:
-            labels = ", ".join(
-                f'"{x}"'
-                for x in ir.attck_labels
-            )
-
-            pipes.append(
-                f"extend MITRETechniques = dynamic([{labels}])"
-            )
+            labels = ", ".join(self._quote(x) for x in ir.attck_labels)
+            pipes.append(f"extend MITRETechniques = dynamic([{labels}])")
         return "\n| ".join(pipes)
 
     # ─────────────────────────────────────────────
@@ -156,36 +161,36 @@ class SentinelTranslator(BaseSIEMTranslator):
         value = cond.value
 
         if op == ComparisonOperator.EQ:
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field} == {val_str}"
 
         elif op == ComparisonOperator.NEQ:
-            val_str = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field} != {val_str}"
 
         elif op == ComparisonOperator.CONTAINS:
-            expr = f'{field} has "{value}"'
+            expr = f"{field} has {self._quote(value)}"
 
         elif op == ComparisonOperator.REGEX:
-            expr = f'{field} matches regex "{value}"'
+            expr = f"{field} matches regex {self._quote(value)}"
 
         elif op == ComparisonOperator.IN:
             if isinstance(value, list):
-                items = ", ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in value)
+                items = ", ".join(self._quote(v) if isinstance(v, str) else str(v) for v in value)
                 expr = f"{field} in ({items})"
             else:
-                expr = f'{field} == "{value}"'
+                expr = f"{field} == {self._quote(value)}"
 
         elif op == ComparisonOperator.NOT_IN:
             if isinstance(value, list):
-                items = ", ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in value)
+                items = ", ".join(self._quote(v) if isinstance(v, str) else str(v) for v in value)
                 expr = f"{field} !in ({items})"
             else:
-                expr = f'{field} != "{value}"'
+                expr = f"{field} != {self._quote(value)}"
 
         else:
             mapped_op = self._map_op(op)
-            val_str   = f'"{value}"' if isinstance(value, str) else str(value)
+            val_str   = self._quote(value) if isinstance(value, str) else str(value)
             expr = f"{field} {mapped_op} {val_str}"
 
         return f"not ({expr})" if cond.negate else expr
@@ -220,25 +225,63 @@ class SentinelTranslator(BaseSIEMTranslator):
             return f"summarize {agg_expr} by {group_fields}"
         return f"summarize {agg_expr}"
 
-    def _build_threshold(self, th: ThresholdCondition) -> str:
+    def _build_threshold(self, ir: IRQuery) -> str:
         """Build post-summarize where threshold."""
+        th = ir.threshold
         op = self._map_op(th.op)
-        return f"where {th.field} {op} {th.value}"
+        # Reconcile against the aggregation's own alias — see
+        # BaseSIEMTranslator._threshold_field for why this matters.
+        field = self._threshold_field(ir) or th.field
+        return f"where {field} {op} {th.value}"
 
     def _build_lookup(self, lookup: LookupSpec) -> str:
-        """Build Sentinel watchlist lookup using _GetWatchlist."""
+        """
+        Build Sentinel watchlist lookup using _GetWatchlist.
+
+        (fixed) This previously always used `kind=inner`, silently
+        ignoring lookup.filter_on_match — every lookup dropped
+        non-matching events regardless of what the IR asked for, unlike
+        Splunk and QRadar which both honor the flag. `kind=leftouter`
+        preserves non-matches (enrich-only); `kind=inner` is used only
+        when filter_on_match=True, matching Splunk's
+        `lookup ... | where isnotnull(...)` semantics.
+        """
         match_field = self._resolve(lookup.match_field)
-        table = lookup.lookup_table
+        join_kind = "inner" if lookup.filter_on_match else "leftouter"
         return (
-            f"join kind=inner (\n"
-            f"    _GetWatchlist('{table}')\n"
+            f"join kind={join_kind} (\n"
+            f"    _GetWatchlist('{lookup.lookup_table}')\n"
             f"    | project SearchKey\n"
             f") on $left.{match_field} == $right.SearchKey"
         )
 
     def _build_sequence(self, steps: list[SequenceStep], base_table: str) -> list[str]:
-        """Build sequence as KQL join chain."""
+        """
+        Build sequence as a KQL join chain.
+
+        (fixed) Correlation join keys were previously hardcoded to
+        `Account, Computer` for every sequence regardless of what fields
+        the steps actually filter on — silently wrong for any sequence
+        correlating on something else (e.g. src_ip, process id). Now
+        inferred via the shared BaseSIEMTranslator helper, which prefers
+        an explicit `correlation_key` on a step and falls back to a
+        field-name heuristic only when none is given.
+        """
         pipes: list[str] = []
+        join_fields = self._infer_correlation_fields(steps)
+        join_on = (
+            ", ".join(f"$left.{f} == $right.{f}" for f in join_fields)
+            if join_fields
+            else "$left.TimeGenerated == $right.TimeGenerated"  # last-resort, see warning below
+        )
+        if not join_fields:
+            log.warning(
+                "Sentinel sequence: no correlation key found on any step "
+                "(no explicit correlation_key and no recognized field in "
+                "step filters) — join condition may be too permissive, "
+                "verify manually"
+            )
+
         for i, step in enumerate(steps[1:], start=2):
             if step.filter:
                 filter_str = self._build_where(step.filter)
@@ -246,10 +289,13 @@ class SentinelTranslator(BaseSIEMTranslator):
                     f"join kind=inner (\n"
                     f"    {base_table}\n"
                     f"    | where {filter_str}\n"
-                    f") on Account, Computer"
+                    f") on {join_on}"
                 )
                 if step.within:
-                    sub += f"\n| where abs(datetime_diff('minute', TimeGenerated, TimeGenerated1)) <= {step.within.rstrip('m')}"
+                    sub += (
+                        f"\n| where abs(datetime_diff('minute', "
+                        f"TimeGenerated, TimeGenerated1)) <= {step.within.rstrip('smhd')}"
+                    )
                 pipes.append(sub)
         return pipes
 

@@ -1,4 +1,3 @@
-
 """
 Translation Orchestrator — the main NL-SIEM pipeline entry point.
 
@@ -49,6 +48,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -397,14 +397,14 @@ class TranslationOrchestrator:
         execution_agent = ExecutionAgent(
             connector_configs={
                 "wazuh": {
-                    "host":     "https://localhost:55000",
-                    "username": "wazuh",
-                    "password": "u.PDwheS.PDWdPtREknLuyv5SFVrW+I7",
+                    "host":     os.getenv("WAZUH_HOST", "https://localhost:55000"),
+                    "username": os.getenv("WAZUH_USER", "wazuh"),
+                    "password": os.getenv("WAZUH_PASSWORD", ""),
                 },
                 "splunk": {
-                    "host":     "https://localhost:8089",
-                    "username": "admin",
-                    "password": "changeme",
+                    "host":     os.getenv("SPLUNK_HOST", "https://localhost:8089"),
+                    "username": os.getenv("SPLUNK_USER", "admin"),
+                    "password": os.getenv("SPLUNK_PASSWORD", ""),
                 },
             }
         )
@@ -807,4 +807,3 @@ class TranslationOrchestrator:
             f"rag={getattr(self.parser_agent, 'retriever', None) is not None}, "
             f"refinement={self.enable_refinement and self.refinement_agent is not None})"
         )
-

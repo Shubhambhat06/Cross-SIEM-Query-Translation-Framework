@@ -236,6 +236,9 @@ class TokenCounter:
         except ImportError:
             log.debug("tiktoken not installed, using char/3 estimation")
             return None
+        except Exception as exc:  # e.g. offline: tiktoken cannot download its vocab file
+            log.debug("tiktoken encoder unavailable, using char/3 estimation", extra={"error": str(exc)})
+            return None
 
     def estimate(self, text: str) -> int:
         """

@@ -39,6 +39,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Generator, Iterator
 
+from dotenv import find_dotenv, load_dotenv
+
+# Load .env into os.environ so LLM_PROVIDER / *_API_KEY set there are honoured.
+# (pydantic-settings reads .env into `settings` but does NOT export it to os.environ.)
+load_dotenv(find_dotenv(usecwd=True))
+
 from src.llm.token_counter import MODEL_REGISTRY, TokenCounter
 from src.utils.exceptions import (
     LLMError,
@@ -1113,4 +1119,3 @@ class LLMClient:
 
     def __repr__(self) -> str:
         return f"LLMClient(provider={self.provider!r}, model={self.model!r})"
-

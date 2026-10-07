@@ -848,12 +848,12 @@ review.
 ## Citation
 
 ```bibtex
-@article{bhat2025nlsiem,
+@article{
   title   = {Detecting What You Think You Detect: Cross-Platform SIEM
              Query Generation and ATT\&CK Coverage Drift Prevention
              via Intermediate Representation and Multi-Agent LLMs},
-  author  = {Bhat, Shubham Dattatraya},
-  year    = {2025},
+  author  = {Dr. Swetha ,  Shubham Dattatraya Bhat},
+  year    = {2026},
   note    = {Preprint under review. Research conducted at PESU C-ISFCR,
              PES University, Bengaluru.}
 }

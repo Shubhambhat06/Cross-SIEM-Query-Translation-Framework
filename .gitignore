@@ -6,6 +6,10 @@ __pycache__/
 
 # Virtual environment
 .venv/
+venv/
+
+# Secrets
+.env
 
 # Node
 node_modules/

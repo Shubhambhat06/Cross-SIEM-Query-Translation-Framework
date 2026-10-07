@@ -171,6 +171,7 @@ def translate(
     verbose:    bool = False,
     dry_run:    bool = False,
     store_path: Path | None = None,
+    execute:    bool = False,
 ) -> dict:
     """
     Run the full NL-SIEM pipeline for one natural-language query.
@@ -201,7 +202,7 @@ def translate(
             "dry_run": True,
         }
 
-    result = orchestrator.translate(nl_query , execute=True)
+    result = orchestrator.translate(nl_query, execute=execute)
 
     if verbose:
         try:
@@ -265,9 +266,10 @@ def _run_one(nl_query: str, args: argparse.Namespace) -> dict | None:
             verbose    = args.verbose,
             dry_run    = args.dry_run,
             store_path = Path(args.store_path) if args.store_path else None,
+            execute    = args.execute,
         )
         _print_translations(result.get("translations", {}))
-        _print_timing(result["elapsed_s"], result.get("tokens_used"))
+        _print_timing(result.get("elapsed_s", 0.0), result.get("tokens_used"))
         _print_footer()
         return result
     except Exception as exc:
@@ -301,7 +303,10 @@ def main() -> int:
     parser.add_argument("--no-refine",        action="store_true",
                         help="Skip self-critique refinement loop")
     parser.add_argument("--dry-run",          action="store_true",
-                        help="Parse NL → IR only; no LLM call")
+                        help="Build the pipeline and exit; makes no LLM call")
+    parser.add_argument("--execute",          action="store_true",
+                        help="Run generated queries on live connectors and deploy the Wazuh rule "
+                             "(uses sudo; off by default)")
     parser.add_argument("--verbose", "-v",    action="store_true",
                         help="Show IR and RAG context")
     parser.add_argument("--output", "-o",     default=None,

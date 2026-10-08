@@ -41,6 +41,7 @@ Prevention via Intermediate Representation and Multi-Agent LLMs</h3>
 - [Live execution (opt-in)](#live-execution-opt-in)
 - [Running the ATT&CK Coverage Audit](#running-the-attck-coverage-audit)
 - [Building SIEMBench and running evaluations](#building-siembench-and-running-evaluations)
+- [Evaluation Results](#evaluation-results)
 - [Repository Structure](#repository-structure)
 - [What is implemented vs. what is planned](#what-is-implemented-vs-what-is-planned)
 - [Adding a new SIEM target](#adding-a-new-siem-target)
@@ -658,6 +659,123 @@ Other flags: `--no-rag`, `--no-refine`, `--es-url`, `--results-file`,
 auditor, execution match, error analysis, ablation, metric aggregation).
 `run_eval.py` (repo root) and `evaluation/` contain additional evaluation
 runners used for the paper experiments.
+
+---
+
+## Evaluation Results
+
+Results reported in the companion paper, measured on the full SIEMBench v1
+benchmark (241 queries · 8 ATT&CK tactics · 3 complexity tiers). Execution-backed
+evaluation covers the two implemented targets only: **Elastic ES|QL** and
+**Wazuh**. Splunk, QRadar and Sentinel are out of scope for these numbers.
+
+| Setting | Value |
+|---|---|
+| Benchmark | SIEMBench v1 — 241 records |
+| Runs | 5 independent runs, seeds `42, 43, 44, 45, 46` (1,205 evaluated instances) |
+| Decoding | Deterministic, temperature = 0.0 |
+| LLM backends | Qwen and Llama families served via Groq |
+| Confidence intervals | 95%, Student's t-distribution over the 5 runs |
+| Significance testing | McNemar's paired test, Holm–Bonferroni corrected, α = 0.05 |
+| Human assessment | SOC analysts at PESU C-ISFCR, 1–5 Likert scale, blind to computed metrics |
+
+**Protocol per record:** (1) run the NL query through the full pipeline →
+(2) compare ATT&CK binding(s) against the gold label → (3) validate the IR
+against the schema → (4) submit the Elastic and Wazuh outputs through their
+connectors → (5) where reference telemetry exists, compute the Drift Score δ.
+
+### Evaluation metrics
+
+| Metric | Definition | Value |
+|---|---|---|
+| ATT&CK classification accuracy | `1/N Σ 1[T̂ᵢ = T*ᵢ]` | 68.7 |
+| Precision / Recall / F1 (ATT&CK) | TP, FP, FN ratios over verified bindings | 89.1 / 86.8 / 87.9 |
+| IR generation accuracy | IR consistency (Eq. 3) pass rate | 83.2 |
+| Translation similarity (TS) | `β·BLEU + (1−β)·F1_field`, β = 0.4 | 67.6 |
+| Execution success rate | Share executing without error against live connectors | 95.1 |
+| Coverage Preservation (CPS) | Jaccard-based symmetric behavioral equivalence, `\|R(D) ∩ R(D′)\| / \|R(D) ∪ R(D′)\|` | 0.84 |
+| Coverage Drift (δ) | `1 − \|R(D) ∩ R(D′)\| / \|R(D)\|` | 0.16 |
+| Semantic Fidelity Score (SFS) | `α·CPS + (1−α)·Prov`, α = 0.7 | 0.82 |
+| Confidence-Weighted Coverage (CWC) | Multi-technique coverage accounting | 0.79 |
+| False positive / negative rate | Over- and under-detection after translation | 8.6 / 11.4 |
+| Token / API cost | USD per record | $0.0029 / query |
+| Translation / end-to-end latency | Seconds, per stage and total | 2.34 / 3.08 s |
+| Human acceptance rate | % rated ≥ 4/5 by SOC analysts | 91.2 |
+
+### Baseline comparison
+
+Direct-prompting baselines receive the same NL query with a single instruction
+to produce a detection for the target platform — no IR, no taxonomy
+verification, no structured intermediate step.
+
+| Approach | ATT&CK Acc. | Exec. Success | Semantic Pres. (1 − δ) | ATT&CK Correctness |
+|---|---|---|---|---|
+| SIGMA (community backends) | 0.60 | 0.87 | 0.78 | 0.62 |
+| Manual rule authoring (SOC baseline) | 0.73 | 0.96 | 0.95 | 0.74 |
+| Direct prompting: GPT-4o | 0.63 | 0.81 | 0.71 | 0.61 |
+| Direct prompting: Claude 3.5 Sonnet | 0.62 | 0.80 | 0.70 | 0.60 |
+| Direct prompting: Qwen (Groq API) | 0.61 | 0.78 | 0.69 | 0.60 |
+| Direct prompting: Llama (Groq API) | 0.58 | 0.75 | 0.66 | 0.57 |
+| **NL-SIEM (Qwen backend)** | 0.67 | 1.00 | 0.88 | 0.83 |
+| **NL-SIEM (Llama backend)** | 0.64 | 1.00 | 0.85 | 0.80 |
+
+*ATT&CK Correctness* = whether the ATT&CK identifier survives translation at
+all, independent of whether the behavior does. Elastic AI Assistant and
+Microsoft Security Copilot are excluded (no product access) rather than
+populated with estimated numbers.
+
+### SOC case studies
+
+Timing and outcome data collected at the C-ISFCR SOC.
+
+| Case | NL query | Manual | NL-SIEM | Drift δ |
+|---|---|---|---|---|
+| Credential Access | "Detect repeated failed SSH logins from the same source IP over 24 hours." | 18 min | 47.8 s | 0.11 |
+| Exfiltration (SB-042) | "Detect outbound connections to known threat intel IPs, last hour." | 24 min | 56.4 s | 0.18 |
+| Discovery | "Detect a single source scanning more than 20 distinct destination ports within 5 minutes." | 21 min | 52.1 s | 0.14 |
+
+All three executed successfully.
+
+### Drift metric validation
+
+- **Correlation with analyst judgment:** three SOC analysts blind-rated the
+  fidelity of 48 translated rule pairs (16 per analyst) on a 1–5 Likert scale.
+  Spearman rank correlation between analyst ratings and computed Drift Scores:
+  **ρ = −0.86 (p < 0.001)**.
+- **Per-tactic coverage preservation (1 − δ):** every tactic improves after
+  NL-SIEM translation; Credential Access shows the largest gain, from
+  **0.49 → 0.88**.
+- **Drift by complexity tier:** NL-SIEM holds mean drift below naive
+  translation at every tier (Simple / Intermediate / Complex).
+- **Sensitivity analysis** (window-boundary jitter, null-value injection,
+  field-name aliasing) is planned, not yet run.
+
+### Ablation and multi-technique classification
+
+- **Ablation:** Zero-shot → Few-shot → IR only → IR + RAG. Each component
+  contributes incrementally to ATT&CK F1; the full IR + RAG configuration is
+  used throughout.
+- **Multi-technique inclusion:** sweeping the acceptance threshold against the
+  multi-label subset of SIEMBench v1 gives **AUC = 0.91**.
+
+### Error taxonomy
+
+Every failure observed during evaluation falls into one of six categories:
+
+| Category | Description |
+|---|---|
+| ATT&CK misclassification | Taxonomy-verified binding that does not match the gold label (typically a sibling technique) |
+| Field mapping failure | Canonical IR field maps to a wrong or absent platform field; the rule silently never matches |
+| Unsupported construct | EQL `sequence`, correctly rejected with `ESQLConversionError` rather than approximated |
+| LLM hallucination | Syntax or field names not grounded in the IR or retrieved documentation |
+| Execution failure | Schema-valid output rejected at the connector layer |
+| NL ambiguity | Query under-determines intent; surfaced by the multi-technique classifier instead of silently resolved |
+
+> **Scope of these results.** Annotations come from a single expert annotator
+> (inter-annotator agreement is planned for v1.1). Numbers apply to
+> filter-and-aggregate-class detections on Elastic ES|QL/EQL and Wazuh. Always
+> review generated rules and shadow-evaluate them against pre-production logs
+> before deployment.
 
 ---
 

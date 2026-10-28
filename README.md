@@ -26,17 +26,36 @@ Prevention via Intermediate Representation and Multi-Agent LLMs</h3>
 
 ---
 
+## At a Glance
+
+| | |
+|---|---|
+| **What it does** | Turns a plain-English detection request into ATT&CK-bound rules for Splunk, QRadar, Elastic, Sentinel and Wazuh from a single Intermediate Representation |
+| **Core idea** | ATT&CK identity is a *required structural field* of the IR, not a label added afterwards, so every platform inherits the same contract |
+| **Validation** | Static syntax checks, live execution on Elastic and Wazuh, and **replay of real SOC authentication logs through generated Wazuh rules** |
+| **Benchmark** | SIEMBench v1: 241 records, 8 ATT&CK tactics, 3 complexity tiers, 5 seeded runs |
+| **Headline results** | Coverage drift δ = 0.16 · ATT&CK F1 = 87.9 · Human acceptance = 91.2% (SOC analysts at C-ISFCR) |
+| **Cost to try** | Free: Groq free-tier API key + Elastic Cloud 14-day trial ([setup](#4a-first-time-get-a-free-groq-api-key)) |
+
+**Typical workflow:** describe a behaviour in English → NL-SIEM generates ATT&CK-bound rules → the Wazuh rule is written to a file →
+the rule is replayed against real log data → analysts review and confirm → opt-in deployment.
+
+---
+
 ## Table of Contents
 
+- [At a Glance](#at-a-glance)
 - [The Problem](#the-problem-your-heatmap-is-green-but-your-detection-doesnt-fire)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [End-to-End Example](#end-to-end-example)
+- [Wazuh Log Filtering & Live SOC Validation](#wazuh-log-filtering--live-soc-validation)
 - [EQL → ES|QL Syntax Bridge](#eql--esql-syntax-bridge)
 - [SIEMBench v1](#siembench-v1)
 - [Connectors](#connectors)
 - [Free-tier LLM support](#free-tier-llm-support)
 - [Installation](#installation)
+  - [Free accounts for trying the tool (Groq + Elastic trial)](#4a-first-time-get-a-free-groq-api-key)
 - [Quickstart](#quickstart)
 - [Live execution (opt-in)](#live-execution-opt-in)
 - [Running the ATT&CK Coverage Audit](#running-the-attck-coverage-audit)
@@ -186,6 +205,9 @@ FROM logs-*
 </rule>
 ```
 
+> ➜ A generated Wazuh rule is not trusted until it has been **replayed against real
+> log data**. See [Wazuh Log Filtering & Live SOC Validation](#wazuh-log-filtering--live-soc-validation).
+
 **Splunk SPL**
 ```
 index=* status=failed earliest=-24h
@@ -215,6 +237,136 @@ SecurityEvent
 The time window travels as `24 hours` in ES|QL and `86400` seconds
 in Wazuh's `<timeframe>`. The ATT&CK sub-technique propagates into
 every output. The IR is the single source of truth.
+
+---
+
+## Wazuh Log Filtering & Live SOC Validation
+
+`wazuh_log_filter.py` · `scripts/translate_query.py --wazuh-rule-file`
+
+A rule can be well-formed XML, carry the correct MITRE tag, pass every static check, and
+still **detect nothing**. Static validation proves structure; it does not prove that the
+rule's parent rule ID, match strings and thresholds line up with the log lines your hosts
+actually produce. That is ATT&CK Coverage Drift at the single-rule level.
+
+After NL-SIEM generates a Wazuh rule, the rule is therefore **replayed against real
+authentication logs** from the PESU C-ISFCR SOC before it is trusted or deployed. This
+turns "the rule is valid" into "the rule fires on the behaviour it claims to detect".
+
+```mermaid
+flowchart LR
+    A["Analyst query<br/>(plain English)"] --> B["NL-SIEM pipeline"]
+    B --> C["Wazuh rule XML<br/>rules/*.xml"]
+    C --> D["wazuh_log_filter.py<br/>replay SOC auth logs"]
+    D -->|"alerts > 0"| E["Analyst review +<br/>wazuh-logtest confirmation"]
+    D -->|"0 alerts"| F["--explain: find the stage<br/>where events drop out"]
+    F -->|"fix translator / rule"| B
+    E --> G["Opt-in deployment<br/>(RuleDeploymentAgent)"]
+```
+
+### What the filter does
+
+- Reads syslog-style authentication logs (`sshd`, `sudo`, PAM, `useradd`, `usermod`) and replays
+  every line through the generated rule.
+- Mirrors how Wazuh evaluates the rule: parent rule (`<if_sid>` / `<if_matched_sid>`),
+  case-sensitive `<match>` / `<regex>` conditions, `<same_source_ip/>`, and
+  `frequency` / `timeframe` thresholds.
+- Reports the number of alerts, the matching log lines, and the highest event count seen per
+  source IP against the configured threshold.
+- `--explain` prints a stage-by-stage funnel (all events → parent rule → each `<match>`), so a rule
+  that detects nothing shows exactly **which condition removed the events**.
+
+### Run it
+
+```bash
+# 1. Generate the rule; the Wazuh XML is written straight to a file
+python scripts/translate_query.py -p wazuh \
+  -q "Detect 10 or more failed SSH logins from the same source IP within 60 seconds" \
+  --wazuh-rule-file rules/ssh_bruteforce.xml
+
+# 2. Replay a log through the rule (syslog timestamps carry no year, so pass --year)
+python wazuh_log_filter.py --log auth_source.log.txt --rule rules/ssh_bruteforce.xml --year 2026 --explain
+```
+
+Chain both so the filter runs only when translation succeeds:
+
+```bash
+python scripts/translate_query.py -p wazuh --wazuh-rule-file rules/ssh_bruteforce.xml \
+  -q "Detect 10 or more failed SSH logins from the same source IP within 60 seconds" \
+&& python wazuh_log_filter.py --log auth_source.log.txt --rule rules/ssh_bruteforce.xml --year 2026 --explain
+```
+
+`--wazuh-rule-file` defaults to `my_rule.xml` in the repository root and is overwritten on every
+run. Pass `--wazuh-rule-file ''` to disable the save.
+
+### Reading `--explain`
+
+> Illustrative output. Exact labels and counts depend on your log and rule.
+
+```
+=== Rule 100002  level 10  mitre=T1110.001,T1021.004
+    Detect 10 or more failed SSH logins from the same source IP within 60 seconds
+    alerts: 2   log lines in result: 11
+    threshold 10 in 60s | highest seen: 11 (203.0.113.77)
+
+  --- explain ---
+  start                                   10000 events
+  parent 5716 (sshd: authentication failed)   25 events
+```
+
+A rule that detects nothing shows the funnel collapsing to `0 events` at one specific line. That
+line is the defect.
+
+### Defects the replay step catches
+
+| Defect in the generated rule | Why static validation passes it | What the replay shows |
+|---|---|---|
+| Wrong parent rule ID (for example `5710`, which covers only non-existent users, instead of `5716` for failed passwords) | The XML is well formed | Funnel collapses at the `parent` line |
+| Lower-case `<match>failed</match>` against log text that says `Failed` | Valid tag, valid text | Funnel drops to `0 events` at the `<match>` line, because Wazuh matching is case-sensitive |
+| `<if_sid>` combined with `frequency` / `timeframe` | Both are valid elements | Warning: Wazuh documents `frequency` together with `<if_matched_sid>` / `<if_matched_group>` / `<if_matched_regex>` |
+| Redundant or duplicate `<match>` conditions copied from the query wording | Each tag is individually valid | Extra stages in the funnel that remove events the parent already guarantees |
+| Slow, low-volume attacker mistaken for a burst | Threshold syntax is valid | Highest count per IP stays below the threshold, so the rule correctly ignores it |
+
+The first two rows describe a real failure we reproduced during development: the original rule for
+*"10 or more failed SSH logins from one IP in 60 seconds"* was valid XML with correct MITRE tags and
+detected nothing on a log that contained the attack. After the translator was corrected to choose the parent
+rule from the IR outcome, use `<if_matched_sid>` for thresholds and stop copying query words into `<match>`,
+the same query detected the attack.
+
+### Live validation with the PESU C-ISFCR SOC
+
+The same commands run unchanged on authentication logs exported from the SOC:
+
+1. **Export.** Take a read-only export of authentication logs (`sshd`, `sudo`, PAM, account-management events) for a defined time window.
+2. **Sanitise.** Pseudonymise hostnames, usernames and internal addresses, in line with the SOC's data-handling rules, before the file is used outside the SOC environment.
+3. **Generate and replay.** Translate each detection query, write the Wazuh rule to `rules/`, and replay the log through it.
+4. **Triage.** For `0 alerts`, run `--explain` and locate the dropped stage. For alerts, SOC analysts check that the matched lines are the intended behaviour.
+5. **Confirm on Wazuh itself.** Paste representative matched lines into `wazuh-logtest` on a Wazuh manager (free and open source) to confirm that the real engine reports the same rule.
+6. **Deploy, opt-in.** Only a rule that survives steps 3 to 5 goes to the manager through `RuleDeploymentAgent`.
+
+> **Data handling.** Live SOC logs must never be committed. Add `*.log`, `*.log.txt` and any sanitised exports to `.gitignore`.
+
+### Reference log and ground-truth detections
+
+The repository workflow is demonstrated on a **synthetic reference authentication log** (10,000 syslog lines, documentation-range
+IP addresses per RFC 5737, with attack sequences seeded at known timestamps). Because the ground truth is known, every detection
+below has an expected result.
+
+| Detection query | Ground truth in the reference log |
+|---|---|
+| Detect 10 or more failed SSH logins from the same source IP within 60 seconds | 11 failures from `203.0.113.77`, 10:23:47 to 10:23:57 |
+| Detect successful SSH login as root from an external IP address | 1 login at 10:23:59 from `203.0.113.77` |
+| Detect SSH login attempts using non-existent usernames | 12 attempts from `198.51.100.23` spread over about 19 hours |
+| Detect sudo used to read /etc/shadow | 1 event at 03:12:51 by `backup` |
+| Detect a new local user account being created | `useradd` of `svc_backup2` at 10:24:20 |
+| Detect a user being added to the sudo group | `usermod` at 10:24:25 |
+| Detect sudo truncating the /var/log/auth.log file | 1 event at 03:15:02 by `backup` |
+
+### Limitations of the filter
+
+- It is an **offline emulation** of the stock Wazuh `sshd`, `sudo` and PAM rule parents. It is not the Wazuh engine; `wazuh-logtest` is the final authority.
+- Parent rule IDs assume Linux syslog sources. Windows event-channel and RDP detections are not covered yet.
+- A passing replay shows that a rule fires on the supplied log. It does not prove the rule is free of false positives on other data.
 
 ---
 
@@ -318,6 +470,7 @@ paired with ATT&CK annotations and IR encodings.
 | Elastic Security | ES\|QL live execution via `_query/esql` | ✓ Implemented · validated at C-ISFCR |
 | Elastic Security | EQL→ES\|QL bridge (filter+aggregate) | ✓ Implemented · partial |
 | Wazuh | Rule deployment + validation via Wazuh API | ✓ Implemented · validated at C-ISFCR |
+| Wazuh | Log replay of generated rules (`wazuh_log_filter.py`) | ✓ Implemented · used on SOC authentication logs |
 | Splunk | SPL REST API execution (`splunk_connector.py`) | Implemented · live validation pending |
 | IBM QRadar | AQL query execution | Near-term (translator only today) |
 | Microsoft Sentinel | Azure Monitor API | Near-term (translator only today) |
@@ -433,6 +586,61 @@ LOG_LEVEL=INFO
 `.env` is loaded automatically by `src/llm/client.py` and is listed in
 `.gitignore` — never commit it. Do not set `MODEL_NAME`; use `LLM_MODEL`.
 
+#### Trying the tool for the first time? Use free accounts
+
+You do not need a paid account to evaluate NL-SIEM. The two services below are free to start
+and cover everything in this README except the optional live Wazuh manager.
+
+| Service | Needed for | Cost to start |
+|---|---|---|
+| Groq API key | The LLM that parses, classifies and translates (required unless you use Ollama, Gemini or OpenRouter) | Free tier, no credit card |
+| Elastic Cloud trial | Optional live ES\|QL validation (`--execute`) | 14-day free trial |
+
+#### 4a. First time? Get a free Groq API key
+
+Takes about two minutes.
+
+1. Open the [Groq Console](https://console.groq.com) and sign in with email or Google. The free tier does not require a credit card.
+2. Open the **API Keys** page ([console.groq.com/keys](https://console.groq.com/keys)) and click **Create API Key**. Give it a descriptive name, for example `nl-siem-dev`.
+3. Copy the key immediately. It starts with `gsk_` and is shown only once. If you lose it, revoke it and create a new one.
+4. Paste it into `.env`:
+
+   ```ini
+   LLM_PROVIDER=groq
+   GROQ_API_KEY=gsk_your_key_here
+   ```
+
+5. Verify it with a real call:
+
+   ```bash
+   python scripts/translate_query.py -q "Detect failed SSH logins from a single IP" -p wazuh --no-refine
+   ```
+
+Free-tier keys are rate limited per model (current limits: [console.groq.com/docs/rate-limits](https://console.groq.com/docs/rate-limits)).
+If you see `429 Too Many Requests`, the client retries automatically; for repeated runs, wait a minute between queries or add `--no-refine` to
+reduce the number of LLM calls. Never commit your key or paste it into issues.
+
+#### 4b. (Optional) Start an Elastic Cloud free trial
+
+Only needed for **execution-backed** Elastic validation. Translation, static validation, the Wazuh log filter
+and the other four platforms work without it.
+
+1. Go to [elastic.co/cloud](https://www.elastic.co/cloud) and start a free trial. The trial lasts 14 days, and at the time of writing no credit card is required to begin.
+2. Create a deployment (the default settings are enough) and open it in Kibana.
+3. Copy the **Elasticsearch endpoint URL** of the deployment.
+4. In Kibana, go to **Stack Management → API keys → Create API key** and copy the encoded key.
+5. Add both values to `.env`:
+
+   ```ini
+   ELASTIC_HOST=https://your-deployment.es.region.cloud.es.io:443
+   ELASTIC_API_KEY=your_encoded_api_key
+   ```
+
+6. Run a translation with live execution enabled (see [Live execution](#live-execution-opt-in)).
+
+When a trial ends, the deployment is suspended; Elastic deletes the deployment and its data if you do not subscribe within 30 days.
+Treat the trial cluster as disposable test infrastructure and never load production data into it.
+
 ### 5. Verify the install (no API key or network needed)
 
 ```bash
@@ -494,7 +702,8 @@ python scripts/translate_query.py
 
 Flags: `-p/--platforms`, `--no-rag`, `--no-refine`, `--dry-run` (builds the
 pipeline and exits; no LLM call), `--execute` (see below), `-v/--verbose`,
-`-o/--output`, `--store-path`.
+`-o/--output`, `--store-path`, `--wazuh-rule-file` (save the generated Wazuh rule to a file for the
+[log filter](#wazuh-log-filtering--live-soc-validation)).
 
 ### From Python
 
@@ -579,6 +788,9 @@ connecting to a SIEM, and backs the self-correction loop: on failure,
 validity is not execution correctness — a query can pass every structural
 check and still fail on a real instance due to schema drift, missing
 indices, or version differences. That is what the connectors above are for.
+
+For Wazuh, [log replay](#wazuh-log-filtering--live-soc-validation) is the middle step between static
+validation and deployment: it checks that a rule fires on real log lines **without** touching a manager.
 
 ---
 
@@ -796,7 +1008,7 @@ Cross-SIEM-Query-Translation-Framework/
 │   └── mitre/enterprise-attack.json
 │
 ├── scripts/                     CLI entrypoints
-│   ├── translate_query.py
+│   ├── translate_query.py       NL → five platforms; --wazuh-rule-file saves the Wazuh rule
 │   ├── ingest_knowledge_base.py
 │   ├── build_siembench.py
 │   ├── generate_dataset.py
@@ -807,6 +1019,8 @@ Cross-SIEM-Query-Translation-Framework/
 │
 ├── evaluation/  evaluations/    extra evaluation runners / sampler / cache / metrics
 ├── run_eval.py                  production evaluation runner
+├── wazuh_log_filter.py          replays SOC auth logs through a Wazuh rule (--explain)
+├── rules/                       generated Wazuh rule files (output of --wazuh-rule-file)
 │
 ├── src/
 │   ├── agents/                  pipeline orchestration
@@ -879,6 +1093,8 @@ release gate, until they are updated.
 - Self-correcting agent loop: parse → translate → validate → refine
 - Elastic, Wazuh and Splunk connectors, plus Wazuh rule deployment
   (opt-in)
+- Wazuh rule-file output and log replay with stage-by-stage `--explain`,
+  used for validation against SOC authentication logs
 - ATT&CK coverage auditor, evaluation harness, benchmark build scripts
 
 **Not yet / not in this repo:**
@@ -929,7 +1145,12 @@ translator wherever `translate_all()` dispatches across platforms
 | "RAG store not found — falling back to few_shot" | Build the index (Installation, step 6). |
 | `Field required: tactic / technique_id` when building an `IRQuery` by hand | Both are required; see the snippet in Installation step 5. |
 | Wazuh/Splunk `EXECUTION FAILED … connection refused` | Expected when no SIEM is running; only occurs with `--execute` / `execute=True`. |
+| `429 Too Many Requests` from Groq | Free-tier rate limit. The client retries; wait a minute between runs, add `--no-refine`, or check [console.groq.com/docs/rate-limits](https://console.groq.com/docs/rate-limits). |
+| Groq `401 Unauthorized` | The key is wrong or revoked. Create a new one (Installation, step 4a) and update `.env`. |
 | Embedding model download fails | First RAG use needs internet access to Hugging Face once; afterwards it is cached. |
+| `wazuh_log_filter.py` reports `0 alerts` | Re-run with `--explain`. The funnel shows which stage (parent rule, a `<match>` condition) removed the events. |
+| Log timestamps look wrong or nothing matches by date | Syslog lines carry no year. Pass `--year` with the year of the log. |
+| `my_rule.xml` not created | The Wazuh platform was excluded (`-p`) or `--wazuh-rule-file ''` was passed, or no Wazuh rule was generated (a warning is printed). |
 
 ---
 
@@ -948,6 +1169,9 @@ translator wherever `translate_all()` dispatches across platforms
   translators) were set heuristically.
 - Static validation checks structure only; it does not prove a rule
   detects the intended behavior on your data.
+- The Wazuh log filter emulates stock Wazuh authentication rule parents offline.
+  It is not the Wazuh engine, covers Linux syslog sources only, and does not replace
+  confirmation with `wazuh-logtest`.
 
 ---
 

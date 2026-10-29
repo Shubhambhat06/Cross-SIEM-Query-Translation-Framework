@@ -285,9 +285,6 @@ def _run_one(nl_query: str, args: argparse.Namespace) -> dict | None:
             execute    = args.execute,
         )
         _print_translations(result.get("translations", {}))
-<<<<<<< HEAD
-        _print_timing(result.get("elapsed_s", 0.0), result.get("tokens_used"))
-=======
         if (
             args.wazuh_rule_file
             and "wazuh" in args.platforms
@@ -295,7 +292,6 @@ def _run_one(nl_query: str, args: argparse.Namespace) -> dict | None:
         ):
             _save_wazuh_rule(result.get("translations", {}), Path(args.wazuh_rule_file))
         _print_timing(result["elapsed_s"], result.get("tokens_used"))
->>>>>>> 0500cc1 (added extra filter files)
         _print_footer()
         return result
     except Exception as exc:

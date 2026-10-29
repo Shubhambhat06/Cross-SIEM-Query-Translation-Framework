@@ -550,18 +550,6 @@ class TranslationOrchestrator:
 
         execution_agent = ExecutionAgent(
             connector_configs={
-<<<<<<< HEAD
-                "wazuh": {
-                    "host":     os.getenv("WAZUH_HOST", "https://localhost:55000"),
-                    "username": os.getenv("WAZUH_USER", "wazuh"),
-                    "password": os.getenv("WAZUH_PASSWORD", ""),
-                },
-                "splunk": {
-                    "host":     os.getenv("SPLUNK_HOST", "https://localhost:8089"),
-                    "username": os.getenv("SPLUNK_USER", "admin"),
-                    "password": os.getenv("SPLUNK_PASSWORD", ""),
-                },
-=======
                 "elastic": {
                     "host": os.getenv(
                         "ELASTIC_URL",
@@ -572,7 +560,6 @@ class TranslationOrchestrator:
                         ""
                     ),
                 }
->>>>>>> 5574123 (some small tweaks)
             }
         )
 
@@ -1192,8 +1179,4 @@ class TranslationOrchestrator:
             f"model={self.model!r}, "
             f"rag={getattr(self.parser_agent, 'retriever', None) is not None}, "
             f"refinement={self.enable_refinement and self.refinement_agent is not None})"
-<<<<<<< HEAD
         )
-=======
-        )
->>>>>>> 5574123 (some small tweaks)

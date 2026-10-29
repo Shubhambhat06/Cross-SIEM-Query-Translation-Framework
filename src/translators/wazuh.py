@@ -13,23 +13,38 @@ Reference: documentation.wazuh.com/current/user-manual/ruleset/ruleset-xml-synta
 
 Place at: src/translators/wazuh.py
 
-Example output:
+Example output (failed SSH logins, 10 in 60 s, same source IP):
     <rule id="100001" level="10">
-      <if_sid>5503</if_sid>
-      <match>Failed password</match>
+      <if_matched_sid>5716</if_matched_sid>
       <same_source_ip/>
-      <frequency>50</frequency>
-      <timeframe>86400</timeframe>
+      <frequency>10</frequency>
+      <timeframe>60</timeframe>
       <group>authentication_failures,</group>
-      <description>Brute force: failed SSH logins from same IP</description>
+      <description>SSH brute force: failed logins from one source IP</description>
       <mitre>
-        <id>T1110</id>
+        <id>T1110.001</id>
       </mitre>
     </rule>
+
+CHANGES vs. previous version (validated against a real syslog auth.log):
+  1. Parent SID: 5710 is "attempt to login using a NON-EXISTENT user" — it does
+     not cover ordinary failed passwords. Failed SSH logins are 5716, accepted
+     logins are 5715. The parent is now chosen from the IR outcome.
+  2. Threshold rules use <if_matched_sid> (Wazuh pairs frequency/timeframe with
+     if_matched_*), plain rules keep <if_sid>.
+  3. IR conditions that the parent rule already guarantees (status=failed,
+     service=ssh) are no longer emitted as <match>failed</match> — that text was
+     lower-case, Wazuh match is case-sensitive, and the real log says "Failed",
+     so the rule could never fire.
+  4. At most one <match> and one <regex> per rule. IN-lists are merged into one
+     OR-ed pattern ("a|b") instead of several <match> tags, which are ANDed.
+  5. Source/destination IP equality uses <srcip>/<dstip> instead of <match>.
 """
 
 from __future__ import annotations
 
+import itertools
+import re
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
@@ -47,10 +62,12 @@ from src.utils.logger import get_logger
 log = get_logger(__name__)
 
 # ── Wazuh event type → group tag + base SID mapping ──────────────────────
+# NOTE: the AUTHENTICATION default assumes sshd (Linux auth.log). Other log
+# sources (Windows 4625, RDP, web apps) need their own parent SIDs.
 EVENT_CONFIG: dict[str, dict] = {
     EventType.AUTHENTICATION: {
         "group":  "authentication_failures",
-        "if_sid": "5710",      # SSHD authentication failure (fixed: was 5503, SSH disconnection)
+        "if_sid": "5716",      # sshd: authentication failed (5710 = non-existent user only)
         "level":  "10",
     },
     EventType.NETWORK: {
@@ -90,28 +107,25 @@ EVENT_CONFIG: dict[str, dict] = {
     },
 }
 
+# Authentication: parent SID by outcome found in the IR filter (sshd).
+AUTH_PARENT_BY_OUTCOME: dict[str, str] = {
+    "failed":  "5716",   # sshd: authentication failed
+    "success": "5715",   # sshd: authentication success
+}
+
+# IR filter conditions the parent rule already guarantees → not re-emitted.
+_OUTCOME_FIELDS = {"status", "outcome", "event_outcome", "result"}
+_FAILED_VALUES  = {"failed", "failure", "fail", "denied", "unsuccessful"}
+_SUCCESS_VALUES = {"success", "successful", "succeeded", "accepted", "ok"}
+_SSH_FIELDS     = {"service", "protocol", "app", "application", "program",
+                   "program_name", "process_name", "auth_type"}
+_SSH_VALUES     = {"ssh", "sshd"}
+
 # Base rule ID for generated custom rules.
-# (fixed) was a single hardcoded int reused for every call to
-# _translate() — every generated rule got the literal same id="100002",
-# so writing more than one generated rule into the same ruleset file
-# caused a duplicate-ID collision (Wazuh rejects or silently keeps only
-# one). Now an incrementing counter, module-level so it persists across
-# calls within a process. For reproducible/idempotent regeneration of
-# the *same* detection, prefer deriving the ID from ir.id when present
-# instead of relying on call order.
-import itertools
-
+# Incrementing counter (module-level, persists across calls in a process) so
+# two generated rules never share one id. For reproducible regeneration of the
+# *same* detection, an ID derived from ir.id is preferred (see _derive_rule_id).
 _rule_id_counter = itertools.count(100002)
-
-# (fixed) EventType.AUTHENTICATION previously used a single if_sid of
-# "5503", which is SSH *disconnection* in Wazuh's default ruleset, not
-# an authentication failure. Different log sources have different
-# correct parent SIDs (SSH failures live in the 5710-5722 range; RDP,
-# Windows 4625, etc. all differ), so a single EventType-level default
-# cannot be correct for every source. 5710 (SSHD authentication failure)
-# is used as the more accurate default; callers targeting a specific
-# log source should override if_sid explicitly rather than rely on this
-# generic fallback.
 
 
 class WazuhTranslator(BaseSIEMTranslator):
@@ -119,34 +133,30 @@ class WazuhTranslator(BaseSIEMTranslator):
 
     PLATFORM = "wazuh"
 
-    # Wazuh uses match/regex — no comparison operators in the SQL sense
-    # We map field conditions to match/regex/field tags
-
     def _translate(self, ir: IRQuery) -> str:
         """Generate a Wazuh XML rule from an IRQuery."""
 
         config = EVENT_CONFIG.get(ir.event_type, EVENT_CONFIG[EventType.ANY])
-        # (improved) prefer a deterministic ID derived from ir.id when the
-        # caller supplied one, so regenerating the *same* detection twice
-        # (e.g. re-running the pipeline, CI diffing) produces the same rule
-        # ID instead of a new one every call. Falls back to the
-        # incrementing counter — still unique within a process — only
-        # when no stable identifier is available.
         rule_id = self._derive_rule_id(ir.id) if ir.id else next(_rule_id_counter)
 
-        # Build rule element
         rule = ET.Element("rule", attrib={
             "id":    str(rule_id),
             "level": config["level"],
         })
 
         # ── Parent rule reference ─────────────────────────────────────────
-        if config["if_sid"]:
-            ET.SubElement(rule, "if_sid").text = config["if_sid"]
+        # Pick the parent from the IR outcome (failed/success) and remember
+        # which IR conditions that parent already covers.
+        outcome, covered = self._scan_filter(ir)
+        parent_sid = AUTH_PARENT_BY_OUTCOME.get(outcome) or config["if_sid"]
+        if parent_sid:
+            # Wazuh pairs frequency/timeframe with if_matched_sid.
+            parent_tag = "if_matched_sid" if ir.threshold else "if_sid"
+            ET.SubElement(rule, parent_tag).text = parent_sid
 
         # ── Filter conditions → match/regex/field tags ─────────────────────
         if ir.filter:
-            self._add_filter_conditions(rule, ir.filter)
+            self._add_filter_conditions(rule, ir.filter, covered)
 
         # ── Aggregation: same_* grouping tags ─────────────────────────────
         if self._requires_aggregation(ir) and ir.aggregation:
@@ -156,15 +166,8 @@ class WazuhTranslator(BaseSIEMTranslator):
                 ET.SubElement(rule, tag)
 
         # ── Threshold → frequency + timeframe ─────────────────────────────
-        # (fixed) <timeframe> only has any effect on Wazuh's frequency-based
-        # correlation when paired with <frequency> — a standalone
-        # <timeframe> with no <frequency> is silently ignored by the rule
-        # engine. Wazuh rules trigger on live event streams; there is no
-        # native concept of "query the last N hours" the way the other
-        # four platforms have earliest/latest or LAST N HOURS. Previously
-        # any ir.time_window emitted a <timeframe> tag regardless of
-        # whether ir.threshold was set, producing XML that looks like it
-        # bounds the rule to 24h but has no actual effect.
+        # <timeframe> only has effect paired with <frequency>. Wazuh rules
+        # trigger on live event streams; there is no "query the last N hours".
         if ir.threshold:
             ET.SubElement(rule, "frequency").text = str(ir.threshold.value)
             if ir.time_window:
@@ -184,56 +187,89 @@ class WazuhTranslator(BaseSIEMTranslator):
             ))
 
         # ── Group tag ─────────────────────────────────────────────────────
-        ET.SubElement(rule, "group").text = config["group"] + ","
+        group = "authentication_success" if outcome == "success" else config["group"]
+        ET.SubElement(rule, "group").text = group + ","
 
         # ── Description ───────────────────────────────────────────────────
-        desc = self._build_description(ir)
-        ET.SubElement(rule, "description").text = desc
+        ET.SubElement(rule, "description").text = self._build_description(ir)
 
         # ── MITRE ATT&CK ──────────────────────────────────────────────────
         if ir.attck_mappings:
             mitre_el = ET.SubElement(rule, "mitre")
-
             seen = set()
-
             for m in ir.attck_mappings:
-                tid = (
-                    m.sub_technique_id
-                    or m.technique_id
-                )
-
+                tid = m.sub_technique_id or m.technique_id
                 if tid and tid not in seen:
                     seen.add(tid)
-                    ET.SubElement(
-                        mitre_el,
-                        "id"
-                    ).text = tid
-
+                    ET.SubElement(mitre_el, "id").text = tid
         elif ir.technique_id:
             mitre_el = ET.SubElement(rule, "mitre")
-            ET.SubElement(
-                mitre_el,
-                "id"
-            ).text = ir.technique_id
+            ET.SubElement(mitre_el, "id").text = ir.technique_id
 
         return self._pretty_xml(rule)
+
+    # ─────────────────────────────────────────────
+    # Parent-rule helpers
+    # ─────────────────────────────────────────────
+
+    def _scan_filter(self, ir: IRQuery) -> tuple[str | None, set[int]]:
+        """
+        Look at the top-level AND-ed IR filter conditions of an authentication
+        query and return (outcome, ids_of_conditions_the_parent_rule_covers).
+
+        outcome is "failed", "success" or None. Conditions such as
+        status == failed or service == ssh are implied by parent rule
+        5716 / 5715, so emitting them again as <match> only adds ways for the
+        rule to silently never fire (case sensitivity, wording).
+        """
+        outcome: str | None = None
+        covered: set[int] = set()
+        if ir.event_type != EventType.AUTHENTICATION or not ir.filter:
+            return outcome, covered
+        # Only skip conditions when they are AND-ed; inside an OR they are not
+        # implied by the parent rule.
+        if not str(getattr(ir.filter, "operator", "and")).lower().endswith("and"):
+            return outcome, covered
+
+        for cond in ir.filter.conditions:
+            if (not isinstance(cond, FilterCondition)
+                    or cond.negate
+                    or cond.op != ComparisonOperator.EQ):
+                continue
+            val = str(cond.value).strip().lower()
+            if cond.field in _OUTCOME_FIELDS and val in _FAILED_VALUES:
+                outcome = "failed"
+                covered.add(id(cond))
+            elif cond.field in _OUTCOME_FIELDS and val in _SUCCESS_VALUES:
+                outcome = "success"
+                covered.add(id(cond))
+            elif cond.field in _SSH_FIELDS and val in _SSH_VALUES:
+                covered.add(id(cond))
+        return outcome, covered
 
     # ─────────────────────────────────────────────
     # Filter condition → Wazuh XML tags
     # ─────────────────────────────────────────────
 
-    def _add_filter_conditions(self, rule: ET.Element, group: FilterGroup) -> None:
+    def _add_filter_conditions(
+        self,
+        rule: ET.Element,
+        group: FilterGroup,
+        covered: frozenset[int] | set[int] = frozenset(),
+    ) -> None:
         """
         Recursively add filter conditions as Wazuh XML tags.
 
-        Wazuh match/regex tags are ANDed implicitly.
-        OR logic is limited — we handle it by adding multiple match tags.
+        Wazuh tags are ANDed implicitly. OR logic is limited: IN-lists are
+        merged into one pattern with "|".
         """
         for cond in group.conditions:
             if isinstance(cond, FilterCondition):
+                if id(cond) in covered:
+                    continue
                 self._add_condition_tag(rule, cond)
             elif isinstance(cond, FilterGroup):
-                self._add_filter_conditions(rule, cond)
+                self._add_filter_conditions(rule, cond, covered)
 
     def _add_condition_tag(self, rule: ET.Element, cond: FilterCondition) -> None:
         """Convert a single FilterCondition into Wazuh XML tag(s)."""
@@ -243,49 +279,42 @@ class WazuhTranslator(BaseSIEMTranslator):
 
         if op == ComparisonOperator.EQ:
             if cond.field in ("event_id", "event_type", "category"):
-                # (fixed) was `<id>` — that tag is reserved for the
-                # rule's own numeric ID and for <mitre><id> technique
-                # references (used correctly elsewhere in this file);
-                # it is not a generic "match this field's value" tag.
-                # Wazuh has no built-in normalized "event_id" match
-                # element, so use the <field name="..."> fallback
-                # already used elsewhere in this method for unmapped
-                # comparisons — consistent handling, not a special case.
+                # <id> is reserved for the rule's own ID / <mitre><id>; use the
+                # generic <field name="..."> tag for these.
                 tag = ET.SubElement(rule, "field", attrib={"name": field})
                 tag.text = str(value)
                 if cond.negate:
                     tag.set("negate", "yes")
-            else:
-                tag = ET.SubElement(rule, "match")
+            elif field in ("srcip", "dstip"):
+                # Dedicated tags (CIDR-aware) instead of a text <match>.
+                tag = ET.SubElement(rule, field)
                 tag.text = str(value)
                 if cond.negate:
                     tag.set("negate", "yes")
+            elif field == "dstuser":
+                # Exact account name, matched against the decoded user field.
+                tag = ET.SubElement(rule, "user")
+                tag.text = "^" + self._os_regex_escape(value) + "$"
+                if cond.negate:
+                    tag.set("negate", "yes")
+            else:
+                self._add_text_condition(rule, [value], cond.negate)
 
         elif op == ComparisonOperator.CONTAINS:
-            tag = ET.SubElement(rule, "match")
-            tag.text = str(value)
-            if cond.negate:
-                tag.set("negate", "yes")
+            self._add_text_condition(rule, [value], cond.negate)
 
         elif op == ComparisonOperator.REGEX:
-            tag = ET.SubElement(rule, "regex")
-            tag.text = str(value)
-            if cond.negate:
-                tag.set("negate", "yes")
+            if rule.find("regex") is None:
+                tag = ET.SubElement(rule, "regex")
+                tag.text = str(value)
+                if cond.negate:
+                    tag.set("negate", "yes")
+            else:
+                self._drop_condition(rule, f"regex {value}")
 
         elif op == ComparisonOperator.GT:
-            # (fixed) previously this branch did nothing but log at
-            # DEBUG level — invisible in production — while the comment
-            # implied the condition would be captured via <frequency>.
-            # It was NOT: <frequency> is only ever populated from
-            # ir.threshold, a completely separate field. A GT condition
-            # arriving inside ir.filter (rather than ir.threshold) was
-            # silently discarded with no trace in the generated rule.
-            # Wazuh XML has no native numeric-comparison filter tag, so
-            # there is no clean structural fix — instead we surface the
-            # loss loudly (WARNING, not DEBUG) and leave a comment in
-            # the rule itself so a reviewer can see a condition was
-            # dropped, rather than trusting an XML that silently omits it.
+            # Wazuh XML has no numeric-comparison filter tag; surface the loss
+            # loudly instead of silently omitting the condition.
             log.warning(
                 "GT filter condition has no Wazuh XML equivalent outside "
                 "ir.threshold — condition dropped from generated rule",
@@ -298,12 +327,14 @@ class WazuhTranslator(BaseSIEMTranslator):
 
         elif op in (ComparisonOperator.IN, ComparisonOperator.NOT_IN):
             negate = (op == ComparisonOperator.NOT_IN) or cond.negate
-            if isinstance(value, list):
-                for v in value:
-                    tag = ET.SubElement(rule, "match")
-                    tag.text = str(v)
+            if isinstance(value, (list, tuple, set)) and value:
+                if field in ("srcip", "dstip"):
+                    tag = ET.SubElement(rule, field)
+                    tag.text = "|".join(str(v) for v in value)
                     if negate:
                         tag.set("negate", "yes")
+                else:
+                    self._add_text_condition(rule, list(value), negate)
 
         else:
             # Fallback — use field tag with value
@@ -311,6 +342,50 @@ class WazuhTranslator(BaseSIEMTranslator):
             tag.text = str(value)
             if cond.negate:
                 tag.set("negate", "yes")
+
+    # ── text-condition helpers ───────────────────────────────────────────
+    @staticmethod
+    def _os_match_escape(v: object) -> str:
+        """Escape the special characters of Wazuh's <match> syntax."""
+        return re.sub(r"([\\^$|!])", r"\\\1", str(v))
+
+    @staticmethod
+    def _os_regex_escape(v: object) -> str:
+        """Escape the special characters of Wazuh's OS_Regex (<regex>) syntax."""
+        return re.sub(r"([\\^$|()+*])", r"\\\1", str(v))
+
+    def _add_text_condition(
+        self, rule: ET.Element, values: list, negate: bool = False
+    ) -> None:
+        """
+        Add a text condition. Wazuh allows one <match> and one <regex> per rule,
+        so the first condition becomes <match>, the second <regex>, and any
+        further one is reported as dropped instead of emitting a duplicate tag.
+        Several values are OR-ed with "|".
+        """
+        if rule.find("match") is None:
+            tag = ET.SubElement(rule, "match")
+            tag.text = "|".join(self._os_match_escape(v) for v in values)
+        elif rule.find("regex") is None:
+            tag = ET.SubElement(rule, "regex")
+            tag.text = "|".join(self._os_regex_escape(v) for v in values)
+        else:
+            self._drop_condition(rule, "|".join(str(v) for v in values))
+            return
+        if negate:
+            tag.set("negate", "yes")
+
+    @staticmethod
+    def _drop_condition(rule: ET.Element, what: str) -> None:
+        log.warning(
+            "Wazuh allows one <match> and one <regex> per rule — extra "
+            "condition dropped from generated rule",
+            extra={"condition": what},
+        )
+        rule.append(ET.Comment(
+            f" DROPPED CONDITION: {what} (only one <match> and one <regex> "
+            f"per rule — verify manually) "
+        ))
 
     @staticmethod
     def _derive_rule_id(ir_id: str) -> int:
@@ -327,7 +402,7 @@ class WazuhTranslator(BaseSIEMTranslator):
         """Map a field name to a Wazuh same_* grouping tag."""
         mapping = {
             "srcip":    "same_source_ip",
-            "dstip":    "same_destination_ip",
+            "dstip":    "same_destination_ip",   # verify tag name against your Wazuh version
             "dstuser":  "same_user",
             "hostname": "same_location",
         }
@@ -336,7 +411,6 @@ class WazuhTranslator(BaseSIEMTranslator):
     def _build_description(self, ir: IRQuery) -> str:
         """Generate a human-readable rule description."""
         if ir.nl_query:
-            # Truncate long NL queries
             return ir.nl_query[:120]
 
         parts = []
@@ -356,7 +430,6 @@ class WazuhTranslator(BaseSIEMTranslator):
         raw = ET.tostring(element, encoding="unicode")
         parsed = minidom.parseString(raw)
         pretty = parsed.toprettyxml(indent="  ")
-        # Remove the XML declaration line minidom adds
         lines = pretty.split("\n")
         if lines[0].startswith("<?xml"):
             lines = lines[1:]
@@ -372,33 +445,35 @@ class WazuhTranslator(BaseSIEMTranslator):
             return False
         q = query.strip()
 
-        # Must be valid XML
         try:
             root = ET.fromstring(q)
         except ET.ParseError as exc:
             log.warning("Wazuh XML parse error", extra={"error": str(exc)})
             return False
 
-        # Must be a <rule> element
         if root.tag != "rule":
             return False
-
-        # Must have id and level attributes
         if "id" not in root.attrib or "level" not in root.attrib:
             return False
-
-        # Must have a <description>
         if root.find("description") is None:
             return False
 
-        # Rule ID must be in custom range (>= 100000)
+        # More than one <match> / <regex> is not valid in a single Wazuh rule.
+        for tag in ("match", "regex"):
+            if len(root.findall(tag)) > 1:
+                log.warning("Wazuh rule has more than one <%s>", tag)
+                return False
+
+        # Threshold rules must carry both frequency and timeframe.
+        # (warning only — failing here would make the refinement loop retry on
+        # something the LLM cannot fix when the IR simply has no time window)
+        if (root.find("frequency") is None) != (root.find("timeframe") is None):
+            log.warning("Wazuh rule has frequency without timeframe (or vice versa)")
+
         try:
             rule_id = int(root.attrib["id"])
             if rule_id < 100000:
-                log.warning(
-                    "Wazuh rule ID in reserved range",
-                    extra={"id": rule_id},
-                )
+                log.warning("Wazuh rule ID in reserved range", extra={"id": rule_id})
         except ValueError:
             return False
 

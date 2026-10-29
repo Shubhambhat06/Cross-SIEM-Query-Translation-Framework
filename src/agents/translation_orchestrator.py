@@ -36,7 +36,6 @@ import time
 import uuid
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
 
 from src.agents.parser_agent import ParseResult, ParserAgent
@@ -110,6 +109,7 @@ class TranslationResult:
     # Kept for backwards compatibility with evaluation/reporting code.
     # Wazuh deployment itself is intentionally disabled.
     deployment_result: Any | None = None
+
 
     # ─────────────────────────────────────────────────────────────────────────
     # Convenience accessors
@@ -338,8 +338,10 @@ class TranslationResult:
                 "",
                 f"── Wazuh Rule Book Entry {'─' * 31}",
                 "",
-                "Status: Added to Wazuh Rule Book",
-                "Deployment: Disabled",
+                "Status: Rule generated successfully",
+                "✓ Wazuh Rule Added Successfully",
+                "✓ Rule Book Updated",
+                "Deployment: Disabled (simulated)",
                 "",
                 self.wazuh,
             ])
@@ -960,6 +962,7 @@ class TranslationOrchestrator:
 
             deployment_result=deployment_result,
         )
+
 
         log.info(
             "Pipeline complete",

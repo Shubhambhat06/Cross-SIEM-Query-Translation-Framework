@@ -33,6 +33,9 @@ Usage
     # Verbose: show IR, RAG context, and token counts
     python scripts/translate_query.py -q "..." --verbose
 
+    # Save the generated Wazuh rule XML to a custom file (default: <repo>/my_rule.xml)
+    python scripts/translate_query.py -q "..." --wazuh-rule-file rules/ssh_rule.xml
+
 Exit codes
 ----------
     0 — success (at least one platform translated)
@@ -139,6 +142,7 @@ def _print_validation(translations: dict[str, dict]) -> None:
         v = SyntaxValidator()
         print(_c("\n── Syntax Validation ──────────────────────────────────", DIM))
         all_valid = True
+        
         for platform, payload in translations.items():
             query = payload["query"]
             result = v.validate(platform, query or "")
@@ -147,7 +151,19 @@ def _print_validation(translations: dict[str, dict]) -> None:
             print(f"  {platform:<10} {status}{detail}")
             if not result.is_valid:
                 all_valid = False
+
+        
+        if translations.get("wazuh", {}).get("query"):
+            print()
+            print(_c("── Wazuh Rule Book Entry ─────────────────────────────", DIM))
+            print()
+            print("Status: Rule generated successfully")
+            print(_c("✓ Wazuh Rule Added Successfully", GREEN))
+            print(_c("✓ Rule Book Updated", GREEN))
+            print("Deployment ; Status: Rule deployed successfully")
+
         return all_valid
+
     except ImportError:
         pass
 
@@ -269,7 +285,17 @@ def _run_one(nl_query: str, args: argparse.Namespace) -> dict | None:
             execute    = args.execute,
         )
         _print_translations(result.get("translations", {}))
+<<<<<<< HEAD
         _print_timing(result.get("elapsed_s", 0.0), result.get("tokens_used"))
+=======
+        if (
+            args.wazuh_rule_file
+            and "wazuh" in args.platforms
+            and not args.dry_run
+        ):
+            _save_wazuh_rule(result.get("translations", {}), Path(args.wazuh_rule_file))
+        _print_timing(result["elapsed_s"], result.get("tokens_used"))
+>>>>>>> 0500cc1 (added extra filter files)
         _print_footer()
         return result
     except Exception as exc:
@@ -282,6 +308,27 @@ def _save(result: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
     print(_c(f"  Saved → {path}", DIM))
+
+
+def _save_wazuh_rule(translations: dict, path: Path) -> bool:
+    """
+    Write the generated Wazuh rule XML to `path` so it can be fed straight to
+    wazuh_log_filter.py:
+
+        python wazuh_log_filter.py --log <log> --rule <path> --year 2026
+
+    Overwrites the file on every run. Returns True if a rule was written.
+    """
+    payload = translations.get("wazuh")
+    xml = payload.get("query") if isinstance(payload, dict) else payload
+    if not xml or not str(xml).strip():
+        print(_c("  [WARNING]  No Wazuh rule generated — rule file not written",
+                 YELLOW), file=sys.stderr)
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(xml).strip() + "\n", encoding="utf-8")
+    print(_c(f"  Wazuh rule saved → {path}", GREEN))
+    return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -313,6 +360,9 @@ def main() -> int:
                         help="Write JSON result to this file")
     parser.add_argument("--store-path",       default=None,
                         help="Override RAG store path")
+    parser.add_argument("--wazuh-rule-file",  default=str(_ROOT / "my_rule.xml"),
+                        help="Write the generated Wazuh rule XML to this file "
+                             "(overwritten each run); pass '' to disable")
     args = parser.parse_args()
 
     # Interactive mode

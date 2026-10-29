@@ -17,7 +17,7 @@ class ConnectorFactory:
             return SplunkConnector(**config)
 
         if platform == "elastic":
-            return ElasticConnector()
+            return ElasticConnector(config)
 
         if platform == "wazuh":
             return WazuhConnector(**config)

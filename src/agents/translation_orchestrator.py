@@ -7,7 +7,7 @@ Wires together all five layers into a single coherent pipeline:
         ↓
     ParserAgent          (Layer 5) — NL → IR via LLM + RAG
         ↓
-    ATTCKClassifierAgent            — classify_multi() → primary + all mappings patched into IR
+    ATTCKClassifierAgent — classify_multi() → primary + all mappings patched into IR
         ↓
     translate_all()      (Layer 2) — IR → 5 SIEM query strings
         ↓
@@ -24,26 +24,9 @@ Design:
     - Batch: orchestrator.translate_batch(queries) → list[TranslationResult]
     - Ablation-ready: run with different PromptCondition values for comparison
 
-Place at: src/agents/translation_orchestrator.py
-
-Usage:
-    from src.agents.translation_orchestrator import TranslationOrchestrator
-
-    orc = TranslationOrchestrator.from_env()
-    result = orc.translate("Detect SSH brute force exceeding 50 attempts in 10 minutes")
-
-    print(result.splunk)
-    print(result.wazuh)
-    print(result.summary())
-
-    # With RAG
-    orc = TranslationOrchestrator.from_env(enable_rag=True)
-
-    # Ablation study
-    for condition in ["zero_shot", "few_shot", "rag"]:
-        orc = TranslationOrchestrator.from_env(condition=condition)
-        result = orc.translate(query)
-        save_result(result, condition)
+Live execution:
+    - Elastic only
+    - Other SIEMs are translated and validated but not executed
 """
 
 from __future__ import annotations
@@ -51,6 +34,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -65,14 +49,17 @@ from src.utils.logger import get_logger
 from src.agents.execution_agent import ExecutionAgent, ExecutionResult
 from src.agents.attck_classifier_agent import ATTCKClassifierAgent
 
+
 log = get_logger(__name__)
 
-from src.agents.rule_deployment_agent import RuleDeploymentAgent
 
 PromptCondition = Literal["zero_shot", "few_shot", "rag"]
 
 
-# ── Translation Result ────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Translation Result
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class TranslationResult:
@@ -83,42 +70,52 @@ class TranslationResult:
     and full provenance for evaluation and paper metrics.
     """
 
-    # ── Identity ──────────────────────────────────────────────────────────
-    run_id:    str
-    nl_query:  str
+    # ── Identity ──────────────────────────────────────────────────────────────
 
-    # ── Final SIEM outputs ────────────────────────────────────────────────
-    splunk:   str
-    qradar:   str
-    elastic:  str
+    run_id: str
+    nl_query: str
+
+    # ── Final SIEM outputs ────────────────────────────────────────────────────
+
+    splunk: str
+    qradar: str
+    elastic: str
     sentinel: str
-    wazuh:    str
+    wazuh: str
 
-    # ── IR ────────────────────────────────────────────────────────────────
+    # ── IR ────────────────────────────────────────────────────────────────────
+
     ir: IRQuery
 
-    # ── Pipeline metadata ─────────────────────────────────────────────────
-    parse_result:       ParseResult
-    validation_report:  ValidationReport
-    refinement_result:  RefinementResult | None
-    condition:          str
-    provider:           str
-    model:              str
+    # ── Pipeline metadata ─────────────────────────────────────────────────────
 
-    # ── Timing ────────────────────────────────────────────────────────────
+    parse_result: ParseResult
+    validation_report: ValidationReport
+    refinement_result: RefinementResult | None
+
+    condition: str
+    provider: str
+    model: str
+
+    # ── Timing ────────────────────────────────────────────────────────────────
+
     elapsed_s: float
 
-    # ── Evaluation helpers ────────────────────────────────────────────────
-    warnings:          list[str]                    = field(default_factory=list)
-    execution_results: dict[str, ExecutionResult] | None = None
-    deployment_result: Any | None                   = None
+    # ── Evaluation helpers ────────────────────────────────────────────────────
 
-    # ─────────────────────────────────────────────
+    warnings: list[str] = field(default_factory=list)
+
+    execution_results: dict[str, ExecutionResult] | None = None
+
+    # Kept for backwards compatibility with evaluation/reporting code.
+    # Wazuh deployment itself is intentionally disabled.
+    deployment_result: Any | None = None
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Convenience accessors
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
     @property
-    
     def translations(self) -> dict[str, dict]:
         return {
             "splunk": {
@@ -167,67 +164,88 @@ class TranslationResult:
     def refinement_used(self) -> bool:
         return self.refinement_result is not None
 
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
     # Serialisation
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
     def to_dict(self) -> dict:
         """Full JSON-serialisable representation for storing results."""
+
         return {
-            "run_id":    self.run_id,
-            "nl_query":  self.nl_query,
-            "ir":        self.ir.to_dict(),
-            # attck_mappings surfaced at top level for coverage auditor
+            "run_id": self.run_id,
+            "nl_query": self.nl_query,
+
+            "ir": self.ir.to_dict(),
+
             "attck": {
                 "primary": {
-                    "tactic":           self.ir.tactic,
-                    "technique_id":     self.ir.technique_id,
+                    "tactic": self.ir.tactic,
+                    "technique_id": self.ir.technique_id,
                     "sub_technique_id": self.ir.sub_technique_id,
-                    "label":            self.ir.attck_label,
+                    "label": self.ir.attck_label,
                 },
+
                 "all_mappings": [
                     {
-                        "tactic":           m.tactic,
-                        "technique_id":     m.technique_id,
+                        "tactic": m.tactic,
+                        "technique_id": m.technique_id,
                         "sub_technique_id": m.sub_technique_id,
-                        "confidence":       m.confidence,
+                        "confidence": m.confidence,
                     }
                     for m in self.ir.attck_mappings
                 ],
             },
+
             "translations": self.translations,
-            "condition":    self.condition,
-            "provider":     self.provider,
-            "model":        self.model,
-            "elapsed_s":    self.elapsed_s,
+
+            "condition": self.condition,
+            "provider": self.provider,
+            "model": self.model,
+
+            "elapsed_s": self.elapsed_s,
+
             "parse_attempts": self.parse_attempts,
-            "rag_used":     self.parse_result.rag_used,
+            "rag_used": self.parse_result.rag_used,
             "refinement_used": self.refinement_used,
+
             "validation": {
-                "pass_rate":        self.pass_rate,
-                "valid_platforms":  self.valid_platforms,
+                "pass_rate": self.pass_rate,
+                "valid_platforms": self.valid_platforms,
                 "failed_platforms": self.failed_platforms,
             },
-            "warnings":    self.warnings,
-            "refinement":  self.refinement_result.to_dict() if self.refinement_result else None,
+
+            "warnings": self.warnings,
+
+            "refinement": (
+                self.refinement_result.to_dict()
+                if self.refinement_result
+                else None
+            ),
+
             "execution_results": (
                 {
                     k: {
-                        "success":        v.success,
+                        "success": v.success,
                         "execution_time": v.execution_time,
-                        "error":          v.error,
+                        "error": v.error,
                     }
                     for k, v in self.execution_results.items()
                 }
-                if self.execution_results else None
+                if self.execution_results
+                else None
             ),
         }
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Human-readable summary
+    # ─────────────────────────────────────────────────────────────────────────
+
     def summary(self) -> str:
         """Human-readable one-block summary for CLI output."""
+
         lines = [
             f"{'─' * 60}",
-            f"NL-SIEM Translation Result",
+            "NL-SIEM Translation Result",
             f"{'─' * 60}",
             f"Query:      {self.nl_query}",
             f"IR:         {self.ir.summary()}",
@@ -236,166 +254,301 @@ class TranslationResult:
             f"Validation: {self.pass_rate:.0%} ({len(self.valid_platforms)}/5 platforms)",
         ]
 
-        # ATT&CK mappings block
+        # ─────────────────────────────────────────────────────────────────────
+        # ATT&CK mappings
+        # ─────────────────────────────────────────────────────────────────────
+
         if self.ir.attck_mappings:
+
             lines.append("")
             lines.append("ATT&CK Mappings")
             lines.append("─" * 60)
+
             for i, m in enumerate(self.ir.attck_mappings):
+
                 tag = " [primary]" if i == 0 else ""
+
                 lines.append(
-                    f"  {m.label} ({m.tactic}) — confidence={m.confidence:.2f}{tag}"
+                    f"  {m.label} ({m.tactic}) — "
+                    f"confidence={m.confidence:.2f}{tag}"
                 )
 
+        # ─────────────────────────────────────────────────────────────────────
+        # Execution results
+        # ─────────────────────────────────────────────────────────────────────
+
         if self.execution_results:
+
             lines.append("")
             lines.append("Execution Results")
             lines.append("─" * 60)
+
             for platform, result in self.execution_results.items():
-                status = "SUCCESS" if result.success else "FAILED"
-                lines.append(f"  {platform}: {status} ({result.execution_time:.3f}s)")
+
+                status = (
+                    "SUCCESS"
+                    if result.success
+                    else "FAILED"
+                )
+
+                lines.append(
+                    f"  {platform}: "
+                    f"{status} ({result.execution_time:.3f}s)"
+                )
+
                 if result.error:
-                    lines.append(f"    Error: {result.error}")
+
+                    lines.append(
+                        f"    Error: {result.error}"
+                    )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # SIEM translations
+        # ─────────────────────────────────────────────────────────────────────
 
         lines.extend([
             "",
             f"── Splunk SPL {'─' * 44}",
             self.splunk,
+
             "",
             f"── QRadar AQL {'─' * 44}",
             self.qradar,
+
             "",
             f"── Elastic EQL {'─' * 43}",
             self.elastic,
+
             "",
             f"── Sentinel KQL {'─' * 42}",
             self.sentinel,
+
             "",
             f"── Wazuh XML {'─' * 45}",
             self.wazuh,
-            f"{'─' * 60}",
         ])
 
+        # ─────────────────────────────────────────────────────────────────────
+        # Wazuh Rule Book Entry
+        # ─────────────────────────────────────────────────────────────────────
+
+        if self.wazuh:
+
+            lines.extend([
+                "",
+                f"── Wazuh Rule Book Entry {'─' * 31}",
+                "",
+                "Status: Added to Wazuh Rule Book",
+                "Deployment: Disabled",
+                "",
+                self.wazuh,
+            ])
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Validation warnings
+        # ─────────────────────────────────────────────────────────────────────
+
         if self.failed_platforms:
-            lines.append(f"⚠ Failed platforms: {self.failed_platforms}")
+
+            lines.append("")
+
+            lines.append(
+                f"⚠ Failed platforms: {self.failed_platforms}"
+            )
+
         for warning in self.warnings:
-            lines.append(f"⚠ {warning}")
+
+            lines.append(
+                f"⚠ {warning}"
+            )
+
+        lines.append(
+            f"{'─' * 60}"
+        )
 
         return "\n".join(lines)
 
 
-# ── Translation Orchestrator ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# Translation Orchestrator
+# ─────────────────────────────────────────────────────────────────────────────
+
 
 class TranslationOrchestrator:
     """
     Main pipeline entry point for the NL-SIEM system.
 
     Pipeline:
-        ParserAgent → ATTCKClassifierAgent (classify_multi) →
-        translate_all → ValidatorAgent → [RefinementAgent]
+
+        ParserAgent
+            ↓
+        ATTCKClassifierAgent
+            ↓
+        translate_all
+            ↓
+        ValidatorAgent
+            ↓
+        RefinementAgent
+            ↓
+        ExecutionAgent — Elastic only
 
     Args:
-        parser_agent:       Configured ParserAgent (LLM + prompts + optional RAG).
-        execution_agent:    Optional ExecutionAgent for live connector validation.
-        validator:          ValidatorAgent for syntax checking.
-        refinement_agent:   Optional RefinementAgent. If None, skips refinement.
-        enable_refinement:  Toggle refinement on/off (default True).
-        provider:           Provider label for result metadata.
-        model:              Model label for result metadata.
-        condition:          Prompt condition for result metadata.
+        parser_agent:
+            Configured ParserAgent.
+
+        execution_agent:
+            Optional ExecutionAgent for live Elastic validation.
+
+        validator:
+            ValidatorAgent for syntax checking.
+
+        refinement_agent:
+            Optional RefinementAgent.
+
+        enable_refinement:
+            Toggle refinement on/off.
+
+        provider:
+            Provider label for result metadata.
+
+        model:
+            Model label for result metadata.
+
+        condition:
+            Prompt condition for result metadata.
     """
 
     def __init__(
         self,
-        parser_agent:       ParserAgent,
-        execution_agent:    ExecutionAgent | None  = None,
-        validator:          ValidatorAgent | None  = None,
-        refinement_agent:   RefinementAgent | None = None,
-        enable_refinement:  bool                   = True,
-        provider:           str                    = "groq",
-        model:              str                    = "llama-3.1-70b-versatile",
-        condition:          PromptCondition         = "few_shot",
+        parser_agent: ParserAgent,
+        execution_agent: ExecutionAgent | None = None,
+        validator: ValidatorAgent | None = None,
+        refinement_agent: RefinementAgent | None = None,
+        enable_refinement: bool = True,
+        provider: str = "groq",
+        model: str = "openai/gpt-oss-120b",
+        condition: PromptCondition = "few_shot",
     ) -> None:
-        self.parser_agent       = parser_agent
-        self.validator          = validator or ValidatorAgent()
-        self.refinement_agent   = refinement_agent
-        self.enable_refinement  = enable_refinement
-        self.provider           = provider
-        self.model              = model
-        self.execution_agent    = execution_agent
-        self.condition          = condition
-        self.rule_deployment_agent = RuleDeploymentAgent()
-        self.attck_classifier   = ATTCKClassifierAgent(
+
+        self.parser_agent = parser_agent
+
+        self.validator = validator or ValidatorAgent()
+
+        self.refinement_agent = refinement_agent
+
+        self.enable_refinement = enable_refinement
+
+        self.provider = provider
+
+        self.model = model
+
+        self.execution_agent = execution_agent
+
+        self.condition = condition
+
+        self.attck_classifier = ATTCKClassifierAgent(
             client=self.parser_agent.client
         )
 
         log.info(
             "TranslationOrchestrator initialised",
             extra={
-                "condition":  condition,
-                "provider":   provider,
-                "model":      model,
-                "refinement": enable_refinement and refinement_agent is not None,
-                "rag":        getattr(parser_agent, "retriever", None) is not None,
+                "condition": condition,
+                "provider": provider,
+                "model": model,
+                "refinement": (
+                    enable_refinement
+                    and refinement_agent is not None
+                ),
+                "rag": (
+                    getattr(
+                        parser_agent,
+                        "retriever",
+                        None
+                    )
+                    is not None
+                ),
             },
         )
 
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
     # Factory methods
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
     @classmethod
     def from_env(
         cls,
-        condition:         PromptCondition = "few_shot",
-        enable_rag:        bool            = False,
-        enable_refinement: bool            = True,
-        store_path:        str             = "src/rag/store",
+        condition: PromptCondition = "few_shot",
+        enable_rag: bool = False,
+        enable_refinement: bool = True,
+        store_path: str = "src/rag/store",
     ) -> "TranslationOrchestrator":
         """
         Build a fully configured orchestrator from environment variables.
-
-        Reads:
-            LLM_PROVIDER, LLM_MODEL, GROQ_API_KEY / GOOGLE_API_KEY,
-            TEMPERATURE, MAX_TOKENS, LLM_TIMEOUT, LLM_MAX_RETRIES
         """
+
         from src.llm.client import LLMClient
 
-        client   = LLMClient.from_env()
+        client = LLMClient.from_env()
+
         provider = client.provider
-        model    = client.model
+        model = client.model
 
         retriever = None
+
         if enable_rag or condition == "rag":
+
             try:
+
                 from src.rag.retriever import Retriever
-                retriever = Retriever.from_store(store_path)
-                log.info("RAG retriever loaded", extra={"store": store_path})
+
+                retriever = Retriever.from_store(
+                    store_path
+                )
+
+                log.info(
+                    "RAG retriever loaded",
+                    extra={
+                        "store": store_path
+                    },
+                )
+
             except Exception as exc:
+
                 log.warning(
                     "RAG store not found — falling back to few_shot. "
                     "Run: python scripts/ingest_knowledge_base.py",
-                    extra={"error": str(exc)},
+                    extra={
+                        "error": str(exc)
+                    },
                 )
+
                 if condition == "rag":
                     condition = "few_shot"
 
         parser = ParserAgent(
-            client    = client,
-            retriever = retriever,
-            condition = condition,
-            provider  = provider,
+            client=client,
+            retriever=retriever,
+            condition=condition,
+            provider=provider,
         )
 
         refinement = None
+
         if enable_refinement:
+
             refinement = RefinementAgent(
-                client       = client,
-                parser_agent = parser,
+                client=client,
+                parser_agent=parser,
             )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Elastic-only live execution
+        # ─────────────────────────────────────────────────────────────────────
 
         execution_agent = ExecutionAgent(
             connector_configs={
+<<<<<<< HEAD
                 "wazuh": {
                     "host":     os.getenv("WAZUH_HOST", "https://localhost:55000"),
                     "username": os.getenv("WAZUH_USER", "wazuh"),
@@ -406,96 +559,131 @@ class TranslationOrchestrator:
                     "username": os.getenv("SPLUNK_USER", "admin"),
                     "password": os.getenv("SPLUNK_PASSWORD", ""),
                 },
+=======
+                "elastic": {
+                    "host": os.getenv(
+                        "ELASTIC_URL",
+                        ""
+                    ),
+                    "api_key": os.getenv(
+                        "ELASTIC_API_KEY",
+                        ""
+                    ),
+                }
+>>>>>>> 5574123 (some small tweaks)
             }
         )
 
         return cls(
-            parser_agent      = parser,
-            execution_agent   = execution_agent,
-            refinement_agent  = refinement,
-            enable_refinement = enable_refinement,
-            provider          = provider,
-            model             = model,
-            condition         = condition,
+            parser_agent=parser,
+            execution_agent=execution_agent,
+            refinement_agent=refinement,
+            enable_refinement=enable_refinement,
+            provider=provider,
+            model=model,
+            condition=condition,
         )
 
     @classmethod
     def for_ablation(
         cls,
-        condition:  PromptCondition,
+        condition: PromptCondition,
         store_path: str = "src/rag/store",
     ) -> "TranslationOrchestrator":
         """
         Build an orchestrator configured for an ablation study condition.
-
-        Maps to three ablation conditions:
-            zero_shot → no examples, no RAG
-            few_shot  → 3 examples, no RAG
-            rag       → 3 examples + retrieved SIEM docs
         """
+
         return cls.from_env(
-            condition         = condition,
-            enable_rag        = (condition == "rag"),
-            enable_refinement = False,   # disabled in ablation for clean comparison
+            condition=condition,
+            enable_rag=(condition == "rag"),
+            enable_refinement=False,
         )
 
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
     # Core pipeline
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
-    def translate(self, nl_query: str, execute: bool = False) -> TranslationResult:
+    def translate(
+        self,
+        nl_query: str,
+        execute: bool = False,
+    ) -> TranslationResult:
         """
         Run the full NL-SIEM pipeline for a single natural language query.
 
         Pipeline:
-            1. ParserAgent:          NL → IRQuery (with retries)
-            2. ATTCKClassifierAgent: classify_multi() → patch IR with
-                                     primary technique + full attck_mappings
-            3. translate_all:        IRQuery → 5 platform queries
-            4. ValidatorAgent:       syntax check all 5 outputs
-            5. RefinementAgent:      fix failures (if enabled + failures exist)
-            6. ExecutionAgent:       live execution (if execute=True)
-            7. RuleDeploymentAgent:  Wazuh deployment (if execute=True)
+
+            1. ParserAgent
+            2. ATTCKClassifierAgent
+            3. translate_all
+            4. ValidatorAgent
+            5. RefinementAgent
+            6. ExecutionAgent — Elastic only
 
         Args:
-            nl_query: Free-text security detection description.
-            execute:  If True, submit generated queries to live connectors.
+            nl_query:
+                Free-text security detection description.
 
-        Returns:
-            TranslationResult with all 5 SIEM queries and full metadata.
-
-        Raises:
-            NLSIEMError: If parsing fails after all retries.
+            execute:
+                If True, execute only the Elastic translation.
         """
-        t0     = time.monotonic()
-        run_id = str(uuid.uuid4())[:8]
+
+        t0 = time.monotonic()
+
+        run_id = str(
+            uuid.uuid4()
+        )[:8]
+
         warnings: list[str] = []
 
         log.info(
             "Pipeline start",
-            extra={"run_id": run_id, "query": nl_query[:80]},
+            extra={
+                "run_id": run_id,
+                "query": nl_query[:80],
+            },
         )
 
-        # ── Step 1: Parse NL → IR ─────────────────────────────────────────
-        parse_result = self.parser_agent.parse(nl_query)
-        ir           = parse_result.ir
-        warnings.extend(parse_result.warnings)
+        # ─────────────────────────────────────────────────────────────────────
+        # Step 1: Parse NL → IR
+        # ─────────────────────────────────────────────────────────────────────
 
-        # ── Step 2: ATT&CK classification (classify_multi) ────────────────
-        # classify_multi() returns every plausible technique ranked by
-        # confidence. The primary (index 0) patches the top-level IR fields.
-        # All bindings are stored in ir.attck_mappings for the coverage
-        # auditor and the TranslationResult audit trail.
+        parse_result = self.parser_agent.parse(
+            nl_query
+        )
+
+        ir = parse_result.ir
+
+        warnings.extend(
+            parse_result.warnings
+        )
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Step 2: ATT&CK classification
+        # ─────────────────────────────────────────────────────────────────────
+
         try:
+
             ir.attck_mappings = []
-            attack_results = self.attck_classifier.classify_multi(nl_query)
+
+            attack_results = (
+                self.attck_classifier.classify_multi(
+                    nl_query
+                )
+            )
 
             if attack_results:
+
                 primary = attack_results[0]
 
                 ir.tactic = primary.tactic
+
                 ir.technique_id = primary.technique
-                ir.sub_technique_id = primary.sub_technique
+
+                ir.sub_technique_id = (
+                    primary.sub_technique
+                )
 
                 ir.attck_mappings = [
                     ATTCKMapping(
@@ -507,63 +695,103 @@ class TranslationOrchestrator:
                     )
                     for r in attack_results
                 ]
-            else:
-                warnings.append("No ATT&CK mappings found.")
 
-           
-            log.info(
-                "ATT&CK multi-classification complete",
-                extra={
-                    "primary_tactic":     primary.tactic,
-                    "primary_technique":  primary.technique,
-                    "primary_confidence": primary.confidence,
-                    "total_mappings":     len(attack_results),
-                    "all_techniques":     [r.sub_technique or r.technique for r in attack_results],
-                },
-            )
+            else:
+
+                warnings.append(
+                    "No ATT&CK mappings found."
+                )
+
+                primary = None
+
+            if attack_results:
+
+                log.info(
+                    "ATT&CK multi-classification complete",
+                    extra={
+                        "primary_tactic": primary.tactic,
+                        "primary_technique": primary.technique,
+                        "primary_confidence": primary.confidence,
+                        "total_mappings": len(attack_results),
+                        "all_techniques": [
+                            r.sub_technique or r.technique
+                            for r in attack_results
+                        ],
+                    },
+                )
 
         except Exception as exc:
-            warnings.append(f"ATT&CK classification failed: {exc}")
+
+            warnings.append(
+                f"ATT&CK classification failed: {exc}"
+            )
+
             log.warning(
-                "ATT&CK classification failed — IR ATT&CK fields unchanged",
-                extra={"run_id": run_id, "error": str(exc)},
+                "ATT&CK classification failed — "
+                "IR ATT&CK fields unchanged",
+                extra={
+                    "run_id": run_id,
+                    "error": str(exc),
+                },
             )
 
         log.info(
             "IR ready",
             extra={
-                "run_id":   run_id,
+                "run_id": run_id,
                 "attempts": parse_result.attempts,
-                "ir":       ir.summary(),
+                "ir": ir.summary(),
             },
         )
 
-        # ── Step 3: Translate IR → 5 SIEM queries ────────────────────────
-        raw_translations = self._safe_translate_all(ir, run_id)
+        # ─────────────────────────────────────────────────────────────────────
+        # Step 3: Translate IR → 5 SIEM queries
+        # ─────────────────────────────────────────────────────────────────────
+
+        raw_translations = self._safe_translate_all(
+            ir,
+            run_id
+        )
+
         for p, payload in raw_translations.items():
+
             q = payload["query"]
+
             if q.startswith("ERROR:"):
+
                 warnings.append(
-                    f"{p}: translation error — {q[len('ERROR:'):]}"
+                    f"{p}: translation error — "
+                    f"{q[len('ERROR:'):]}"
                 )
 
-        # ── Step 4: Validate all outputs ─────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # Step 4: Validate all outputs
+        # ─────────────────────────────────────────────────────────────────────
+
         validation_report = self.validator.validate(
-            translations = raw_translations,
-            nl_query     = nl_query,
+            translations=raw_translations,
+            nl_query=nl_query,
         )
 
         log.info(
             "Validation complete",
             extra={
-                "run_id":    run_id,
-                "pass_rate": f"{validation_report.pass_rate:.0%}",
-                "failed":    validation_report.failed_platforms,
+                "run_id": run_id,
+                "pass_rate": (
+                    f"{validation_report.pass_rate:.0%}"
+                ),
+                "failed": (
+                    validation_report.failed_platforms
+                ),
             },
         )
 
-        # ── Step 5: Refinement (if enabled and failures exist) ────────────
-        refinement_result  = None
+        # ─────────────────────────────────────────────────────────────────────
+        # Step 5: Refinement
+        # ─────────────────────────────────────────────────────────────────────
+
+        refinement_result = None
+
         final_translations = raw_translations
 
         if (
@@ -571,234 +799,389 @@ class TranslationOrchestrator:
             and self.refinement_agent is not None
             and not validation_report.all_valid
         ):
+
             log.info(
                 "Starting refinement",
-                extra={"run_id": run_id, "failing": validation_report.failed_platforms},
+                extra={
+                    "run_id": run_id,
+                    "failing": (
+                        validation_report.failed_platforms
+                    ),
+                },
             )
-            refinement_result = self.refinement_agent.refine(
-                nl_query     = nl_query,
-                translations = raw_translations,
-                report       = validation_report,
-                ir           = ir,
+
+            refinement_result = (
+                self.refinement_agent.refine(
+                    nl_query=nl_query,
+                    translations=raw_translations,
+                    report=validation_report,
+                    ir=ir,
+                )
             )
-            final_translations = refinement_result.final_translations
-            ir                 = refinement_result.final_ir
+
+            final_translations = (
+                refinement_result.final_translations
+            )
+
+            ir = refinement_result.final_ir
 
             validation_report = self.validator.validate(
-                translations = final_translations,
-                nl_query     = nl_query,
+                translations=final_translations,
+                nl_query=nl_query,
             )
 
             log.info(
                 "Post-refinement validation",
                 extra={
-                    "run_id":    run_id,
-                    "pass_rate": f"{validation_report.pass_rate:.0%}",
-                    "fixed":     refinement_result.platforms_fixed,
+                    "run_id": run_id,
+                    "pass_rate": (
+                        f"{validation_report.pass_rate:.0%}"
+                    ),
+                    "fixed": (
+                        refinement_result.platforms_fixed
+                    ),
                 },
             )
 
-        # ── Step 6: Live execution (optional) ────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # Step 6: Elastic-only live execution
+        # ─────────────────────────────────────────────────────────────────────
+
         execution_results = None
-        if execute and self.execution_agent is not None:
-            execution_results = self.execution_agent.execute_all(
-    {
-        "splunk":
-            final_translations.get("splunk", {})
-            .get("query", ""),
 
-        "elastic":
-            final_translations.get("elastic", {})
-            .get("query", ""),
+        if (
+            execute
+            and self.execution_agent is not None
+        ):
 
-        "wazuh":
-            final_translations.get("wazuh", {})
-            .get("query", ""),
-    }
-)
+            execution_results = (
+                self.execution_agent.execute_all(
+                    {
+                        "splunk": (
+                            final_translations
+                            .get("splunk", {})
+                            .get("query", "")
+                        ),
 
-        # ── Step 7: Wazuh rule deployment (optional) ─────────────────────
-        deployment_result = None
-        if execute and final_translations.get("wazuh"):
-            deployment_result = self.rule_deployment_agent.deploy(
-                final_translations["wazuh"]
+                        "qradar": (
+                            final_translations
+                            .get("qradar", {})
+                            .get("query", "")
+                        ),
+
+                        "elastic": (
+                            final_translations
+                            .get("elastic", {})
+                            .get("query", "")
+                        ),
+
+                        "sentinel": (
+                            final_translations
+                            .get("sentinel", {})
+                            .get("query", "")
+                        ),
+
+                        "wazuh": (
+                            final_translations
+                            .get("wazuh", {})
+                            .get("query", "")
+                        ),
+                    }
+                )
             )
-            print("\nDEPLOYMENT RESULT:")
-            print(deployment_result)
 
-        elapsed = round(time.monotonic() - t0, 3)
+        # Wazuh deployment intentionally disabled.
+        # The generated Wazuh rule is displayed as a Rule Book Entry only.
+        deployment_result = None
+
+        # ─────────────────────────────────────────────────────────────────────
+        # Final result
+        # ─────────────────────────────────────────────────────────────────────
+
+        elapsed = round(
+            time.monotonic() - t0,
+            3
+        )
 
         result = TranslationResult(
-    run_id=run_id,
-    nl_query=nl_query,
+            run_id=run_id,
 
-    splunk=final_translations.get(
-        "splunk", {}
-    ).get("query", ""),
+            nl_query=nl_query,
 
-    qradar=final_translations.get(
-        "qradar", {}
-    ).get("query", ""),
+            splunk=(
+                final_translations
+                .get("splunk", {})
+                .get("query", "")
+            ),
 
-    elastic=final_translations.get(
-        "elastic", {}
-    ).get("query", ""),
+            qradar=(
+                final_translations
+                .get("qradar", {})
+                .get("query", "")
+            ),
 
-    sentinel=final_translations.get(
-        "sentinel", {}
-    ).get("query", ""),
+            elastic=(
+                final_translations
+                .get("elastic", {})
+                .get("query", "")
+            ),
 
-    wazuh=final_translations.get(
-        "wazuh", {}
-    ).get("query", ""),
+            sentinel=(
+                final_translations
+                .get("sentinel", {})
+                .get("query", "")
+            ),
 
-    ir=ir,
-    parse_result=parse_result,
-    validation_report=validation_report,
-    refinement_result=refinement_result,
-    condition=self.condition,
-    provider=self.provider,
-    model=self.model,
-    elapsed_s=elapsed,
-    warnings=warnings,
-    execution_results=execution_results,
-    deployment_result=deployment_result,
-)
+            wazuh=(
+                final_translations
+                .get("wazuh", {})
+                .get("query", "")
+            ),
+
+            ir=ir,
+
+            parse_result=parse_result,
+
+            validation_report=validation_report,
+
+            refinement_result=refinement_result,
+
+            condition=self.condition,
+
+            provider=self.provider,
+
+            model=self.model,
+
+            elapsed_s=elapsed,
+
+            warnings=warnings,
+
+            execution_results=execution_results,
+
+            deployment_result=deployment_result,
+        )
+
         log.info(
             "Pipeline complete",
             extra={
-                "run_id":    run_id,
-                "pass_rate": f"{result.pass_rate:.0%}",
+                "run_id": run_id,
+                "pass_rate": (
+                    f"{result.pass_rate:.0%}"
+                ),
                 "elapsed_s": elapsed,
-                "refined":   refinement_result is not None,
-                "attck":     ir.attck_label,
-                "mappings":  len(ir.attck_mappings),
+                "refined": (
+                    refinement_result is not None
+                ),
+                "attck": ir.attck_label,
+                "mappings": len(
+                    ir.attck_mappings
+                ),
             },
         )
+
         return result
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Batch
+    # ─────────────────────────────────────────────────────────────────────────
 
     def translate_batch(
         self,
         nl_queries: list[str],
-        delay_s:    float     = 0.5,
-        save_path:  Path | None = None,
-    ) -> tuple[list[TranslationResult], list[dict]]:
+        delay_s: float = 0.5,
+        save_path: Path | None = None,
+    ) -> tuple[
+        list[TranslationResult],
+        list[dict]
+    ]:
         """
         Translate a list of NL queries through the full pipeline.
-
-        Args:
-            nl_queries: List of natural language query strings.
-            delay_s:    Delay between queries (rate limit management).
-            save_path:  Optional JSONL file to append results incrementally.
-
-        Returns:
-            Tuple of (successful TranslationResults, list of failure dicts).
         """
+
         successes: list[TranslationResult] = []
-        failures:  list[dict]              = []
+
+        failures: list[dict] = []
 
         log.info(
             "Batch translation start",
-            extra={"total": len(nl_queries), "condition": self.condition},
+            extra={
+                "total": len(nl_queries),
+                "condition": self.condition,
+            },
         )
 
         for i, query in enumerate(nl_queries):
+
             try:
-                result = self.translate(query)
-                successes.append(result)
+
+                result = self.translate(
+                    query
+                )
+
+                successes.append(
+                    result
+                )
 
                 if save_path is not None:
-                    self._append_result(result, save_path)
+
+                    self._append_result(
+                        result,
+                        save_path
+                    )
 
                 log.info(
                     "Batch progress",
                     extra={
-                        "done":  i + 1,
+                        "done": i + 1,
                         "total": len(nl_queries),
                         "query": query[:60],
-                        "valid": result.pass_rate >= 1.0,
+                        "valid": (
+                            result.pass_rate >= 1.0
+                        ),
                     },
                 )
 
             except NLSIEMError as exc:
+
                 log.error(
                     "Batch translation failure",
-                    extra={"index": i, "query": query[:60], "error": str(exc)},
+                    extra={
+                        "index": i,
+                        "query": query[:60],
+                        "error": str(exc),
+                    },
                 )
+
                 failures.append({
-                    "index":    i,
+                    "index": i,
                     "nl_query": query,
-                    "error":    str(exc),
-                    "details":  exc.details,
+                    "error": str(exc),
+                    "details": exc.details,
                 })
 
-            if delay_s > 0 and i < len(nl_queries) - 1:
-                time.sleep(delay_s)
+            if (
+                delay_s > 0
+                and i < len(nl_queries) - 1
+            ):
+
+                time.sleep(
+                    delay_s
+                )
 
         log.info(
             "Batch translation complete",
             extra={
-                "total":    len(nl_queries),
-                "success":  len(successes),
+                "total": len(nl_queries),
+                "success": len(successes),
                 "failures": len(failures),
                 "avg_pass_rate": (
-                    sum(r.pass_rate for r in successes) / len(successes)
-                    if successes else 0.0
+                    sum(
+                        r.pass_rate
+                        for r in successes
+                    ) / len(successes)
+                    if successes
+                    else 0.0
                 ),
             },
         )
+
         return successes, failures
 
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
     # Helpers
-    # ─────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
 
-    def _safe_translate_all(self, ir: IRQuery, run_id: str) -> dict[str, str]:
+    def _safe_translate_all(
+        self,
+        ir: IRQuery,
+        run_id: str
+    ) -> dict[str, dict]:
         """
-        Call translate_all and gracefully handle per-platform failures.
-        Returns dict with ERROR: prefix for failed platforms.
+        Call translate_all and gracefully handle
+        per-platform failures.
         """
+
         try:
-            translations = translate_all(ir)
+
+            translations = translate_all(
+                ir
+            )
+
         except Exception as exc:
+
             log.error(
                 "translate_all failed entirely",
-                extra={"run_id": run_id, "error": str(exc)},
+                extra={
+                    "run_id": run_id,
+                    "error": str(exc),
+                },
             )
+
             translations = {
-    p: {
-        "query": f"ERROR: translate_all failed: {exc}",
-        "attck": [],
-    }
-    for p in (
-        "splunk",
-        "qradar",
-        "elastic",
-        "sentinel",
-        "wazuh",
-    )
-}
+                p: {
+                    "query": (
+                        f"ERROR: translate_all failed: {exc}"
+                    ),
+                    "attck": [],
+                }
+
+                for p in (
+                    "splunk",
+                    "qradar",
+                    "elastic",
+                    "sentinel",
+                    "wazuh",
+                )
+            }
 
         for platform, payload in translations.items():
+
             query = payload["query"]
+
             if query.startswith("ERROR:"):
+
                 log.warning(
                     "Translation error for platform",
-                    extra={"run_id": run_id, "platform": platform, "error": query},
+                    extra={
+                        "run_id": run_id,
+                        "platform": platform,
+                        "error": query,
+                    },
                 )
 
         return translations
 
     @staticmethod
-    def _append_result(result: TranslationResult, path: Path) -> None:
+    def _append_result(
+        result: TranslationResult,
+        path: Path
+    ) -> None:
         """Append a single result to a JSONL file."""
+
         import json
+
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(result.to_dict(), ensure_ascii=False) + "\n")
+
+        path.parent.mkdir(
+            parents=True,
+            exist_ok=True
+        )
+
+        with path.open(
+            "a",
+            encoding="utf-8"
+        ) as f:
+
+            f.write(
+                json.dumps(
+                    result.to_dict(),
+                    ensure_ascii=False
+                )
+                + "\n"
+            )
 
     def __repr__(self) -> str:
+
         return (
             f"TranslationOrchestrator("
             f"condition={self.condition!r}, "
@@ -806,4 +1189,8 @@ class TranslationOrchestrator:
             f"model={self.model!r}, "
             f"rag={getattr(self.parser_agent, 'retriever', None) is not None}, "
             f"refinement={self.enable_refinement and self.refinement_agent is not None})"
+<<<<<<< HEAD
         )
+=======
+        )
+>>>>>>> 5574123 (some small tweaks)

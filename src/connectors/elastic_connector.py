@@ -1,6 +1,5 @@
 from elasticsearch import Elasticsearch
 
-from src.utils.config import settings
 from src.translators.esql_converter import (
     ElasticQueryConverter
 )
@@ -8,7 +7,22 @@ from src.translators.esql_converter import (
 
 class ElasticConnector:
 
-    def __init__(self):
+    def __init__(
+        self,
+        config: dict | None = None
+    ):
+
+        config = config or {}
+
+        self.host = config.get(
+            "host",
+            ""
+        )
+
+        self.api_key = config.get(
+            "api_key",
+            ""
+        )
 
         self.client: Elasticsearch | None = None
 
@@ -17,22 +31,31 @@ class ElasticConnector:
     ) -> None:
 
         print("\n=== ELASTIC DEBUG ===")
-        print("HOST =", repr(settings.es_host))
+        print(
+            "HOST =",
+            repr(self.host)
+        )
 
-        try:
-            print(
-                "API KEY LEN =",
-                len(settings.es_api_key)
+        print(
+            "API KEY LEN =",
+            len(self.api_key)
+        )
+
+        if not self.host:
+            raise ValueError(
+                "Elastic host is empty. "
+                "Set ELASTIC_URL."
             )
-        except Exception as exc:
-            print(
-                "API KEY ERROR =",
-                exc
+
+        if not self.api_key:
+            raise ValueError(
+                "Elastic API key is empty. "
+                "Set ELASTIC_API_KEY."
             )
 
         self.client = Elasticsearch(
-            settings.es_host,
-            api_key=settings.es_api_key
+            self.host,
+            api_key=self.api_key
         )
 
         print("CLIENT CREATED")
@@ -49,72 +72,36 @@ class ElasticConnector:
 
         if self.client is None:
             raise RuntimeError(
-                "ElasticConnector not connected"
+                "Elastic connector is not connected."
             )
 
-        esql_query = (
-            ElasticQueryConverter.to_esql(
+        conversion = (
+            ElasticQueryConverter.convert(
                 query
             )
         )
 
-        print("\n=== ESQL QUERY ===")
+        if conversion.warnings:
+
+            print(
+                "\n=== ES|QL CONVERSION WARNINGS ==="
+            )
+
+            for warning in conversion.warnings:
+                print(
+                    f"- {warning}"
+                )
+
+        esql_query = conversion.esql
+
+        print(
+            "\n=== EXECUTING ES|QL ==="
+        )
+
         print(esql_query)
 
-        result = self.client.esql.query(
+        response = self.client.esql.query(
             query=esql_query
         )
 
-        print("\n=== ESQL RESULT ===")
-        print(result)
-
-        if "columns" in result:
-            print("\n=== COLUMNS ===")
-            for col in result["columns"]:
-                print(col["name"])
-
-        if "values" in result:
-            print("\n=== ROWS ===")
-            for row in result["values"]:
-                print(row)
-
-        return result
-
-    def execute_esql(
-        self,
-        esql_query: str
-    ) -> dict:
-
-        if self.client is None:
-            raise RuntimeError(
-                "ElasticConnector not connected"
-            )
-
-        result = self.client.esql.query(
-            query=esql_query
-        )
-
-        print("\n=== ESQL RESULT ===")
-        print(result)
-
-        return result
-
-    def ping(
-        self
-    ) -> bool:
-
-        if self.client is None:
-            return False
-
-        return self.client.ping()
-
-    def info(
-        self
-    ) -> dict:
-
-        if self.client is None:
-            raise RuntimeError(
-                "ElasticConnector not connected"
-            )
-
-        return self.client.info()
+        return response.body
